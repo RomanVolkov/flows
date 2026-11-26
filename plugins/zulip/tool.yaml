@@ -1,0 +1,19 @@
+schema: flows/tool/v1
+id: zulip
+version: 1.0.0
+owner: flows
+description: Zulip channel/topic operations to open, reuse, reply to, and resolve topics
+credentials:
+  - id: zulip-bot
+    provider: zulip
+    required: true
+operations:
+  - id: zulip.open-or-reuse-topic
+    description: Open a Zulip topic or reuse it if messages already exist
+    execution_kind: plugin
+  - id: zulip.reply-topic
+    description: Post a reply to a Zulip channel topic, avoiding duplicate posts
+    execution_kind: plugin
+  - id: zulip.resolve-topic
+    description: Resolve a Zulip topic if not already resolved
+    execution_kind: plugin

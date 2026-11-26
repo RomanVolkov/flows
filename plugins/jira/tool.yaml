@@ -1,0 +1,25 @@
+schema: flows/tool/v1
+id: jira
+version: 1.0.0
+owner: flows
+description: Jira parameterized issue search, lookup, and status transitions
+credentials:
+  - id: jira-api
+    provider: jira
+    required: true
+operations:
+  - id: jira.search-issues
+    description: Search Jira issues using a stored, parameterized JQL query
+    execution_kind: plugin
+    read_only: true
+    output_schema:
+      type: object
+      properties:
+        issues: {type: array}
+  - id: jira.get-issue
+    description: Fetch a Jira issue by key
+    execution_kind: plugin
+    read_only: true
+  - id: jira.transition-issue
+    description: Transition a Jira issue to a target status if not already there
+    execution_kind: plugin

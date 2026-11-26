@@ -1,0 +1,17 @@
+schema: flows/tool/v1
+id: youtrack
+version: 1.0.0
+owner: flows
+description: YouTrack issue lookup and state transitions
+credentials:
+  - id: youtrack-api
+    provider: youtrack
+    required: true
+operations:
+  - id: youtrack.get-issue
+    description: Fetch a YouTrack issue by readable ID
+    execution_kind: plugin
+    read_only: true
+  - id: youtrack.transition-issue
+    description: Transition a YouTrack issue state if not already in target state
+    execution_kind: plugin
