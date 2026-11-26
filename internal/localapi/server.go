@@ -122,7 +122,7 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && !strings.HasPrefix(r.URL.Path, "/v1/library/") {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -162,6 +162,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			handleRuns(w, r, runs)
 		case "/v1/library":
 			handleLibrary(w, r, home, nil)
+		case "/v1/settings", "/v1/settings/validate":
+			SettingsHandler(home)(w, r)
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
