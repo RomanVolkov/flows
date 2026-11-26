@@ -66,7 +66,7 @@ func TestInit(t *testing.T) {
 	if err := home.Init(); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{home.Config, home.State, home.Cache, home.Logs, home.Runtime, home.Workflows(), home.Tools(), home.Spec(), home.Settings()} {
+	for _, path := range []string{home.Config, home.State, home.Cache, home.Logs, home.Runtime, home.Workflows(), home.Tools(), home.Spec(), home.Artifacts(), home.Settings()} {
 		info, err := os.Stat(path)
 		if err != nil {
 			t.Fatal(err)

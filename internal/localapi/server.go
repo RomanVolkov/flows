@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/romanvolkov/flows/internal/paths"
+	"github.com/romanvolkov/flows/internal/store"
 )
 
 func Run(ctx context.Context, home paths.Home, build string) error {
@@ -28,6 +29,12 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	if err := home.Init(); err != nil {
 		return err
 	}
+
+	state, err := store.Open(ctx, filepath.Join(home.State, "flows.db"))
+	if err != nil {
+		return err
+	}
+	defer state.Close()
 
 	listener, err := listen(home.Socket())
 	if err != nil {
