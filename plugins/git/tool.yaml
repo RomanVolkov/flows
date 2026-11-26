@@ -1,0 +1,23 @@
+schema: flows/tool/v1
+id: git
+version: 1.0.0
+owner: flows
+description: Isolated Git workspace operations
+operations:
+  - id: git.checkout
+    description: Prepare an isolated git worktree
+    execution_kind: plugin
+  - id: git.verify
+    description: Verify repository identity and default branch
+    execution_kind: plugin
+    read_only: true
+  - id: git.status
+    description: Inspect branch, head SHA, and dirty state
+    execution_kind: plugin
+    read_only: true
+  - id: git.commit
+    description: Stage and commit changes in a checkout
+    execution_kind: plugin
+  - id: git.push
+    description: Push a verified head and reconcile the remote ref
+    execution_kind: plugin
