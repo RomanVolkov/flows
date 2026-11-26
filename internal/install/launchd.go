@@ -34,6 +34,10 @@ func DefaultLabel(homeDir string, isDevHome bool) string {
 
 // RenderLaunchdPlist renders a launchd plist safely handling paths with spaces.
 func RenderLaunchdPlist(cfg LaunchdConfig) string {
+	homeArgs := "\t\t<string>run</string>"
+	if cfg.HomeDir != "" {
+		homeArgs = fmt.Sprintf("\t\t<string>run</string>\n\t\t<string>--home</string>\n\t\t<string>%s</string>", html.EscapeString(cfg.HomeDir))
+	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -43,8 +47,7 @@ func RenderLaunchdPlist(cfg LaunchdConfig) string {
 	<key>ProgramArguments</key>
 	<array>
 		<string>%s</string>
-		<string>--home</string>
-		<string>%s</string>
+%s
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
@@ -59,7 +62,7 @@ func RenderLaunchdPlist(cfg LaunchdConfig) string {
 `,
 		html.EscapeString(cfg.Label),
 		html.EscapeString(cfg.DaemonBin),
-		html.EscapeString(cfg.HomeDir),
+		homeArgs,
 		html.EscapeString(filepath.Join(cfg.LogDir, "flowsd.out.log")),
 		html.EscapeString(filepath.Join(cfg.LogDir, "flowsd.err.log")),
 	)

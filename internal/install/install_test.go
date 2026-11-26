@@ -79,7 +79,7 @@ func TestInstallTwiceSpacesAndUserEditedWorkflow(t *testing.T) {
 	}
 
 	// User edits a workflow file; second install must preserve it.
-	userWF := filepath.Join(home, ".local/share/flows/workflows/review-open-prs/workflow.yaml")
+	userWF := filepath.Join(home, ".config/flows/workflows/review-open-prs/workflow.yaml")
 	if err := os.WriteFile(userWF, []byte("schema: flows/v1\n# user customized\n"), 0644); err != nil {
 		t.Fatal(err)
 	}

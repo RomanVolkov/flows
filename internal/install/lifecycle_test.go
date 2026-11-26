@@ -50,15 +50,15 @@ func TestUpgradeRollbackUninstallAndReinstall(t *testing.T) {
 		t.Fatal("v2 bundle file should have been rolled back")
 	}
 
-	// Validate failure also rolls back bundle and removes stale WAL/SHM.
-	if err := os.WriteFile(storePath+"-wal", []byte("stale-wal"), 0600); err != nil {
-		t.Fatal(err)
-	}
+	// Validate failure also rolls back bundle and removes stale WAL/SHM created during migration.
 	err = Upgrade(context.Background(), UpgradeOptions{
 		HomeDir:   home,
 		NewBundle: b2,
 		StorePath: storePath,
 		Migrate: func(_ context.Context, p string) error {
+			if err := os.WriteFile(p+"-wal", []byte("stale-wal"), 0600); err != nil {
+				return err
+			}
 			return os.WriteFile(p, []byte("migrated-v2"), 0600)
 		},
 		Validate: func(context.Context) error { return errors.New("post-check failed") },

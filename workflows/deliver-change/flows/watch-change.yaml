@@ -57,12 +57,13 @@ nodes:
         request_number: ${{ inputs.request_number }}
         expected_head_sha: ${{ inputs.expected_head_sha }}
     outputs:
-      ready_to_merge: {type: boolean, required: true}
+      ready_for_github: {type: boolean, required: true}
+      ready_for_gitlab: {type: boolean, required: true}
       head_sha: {type: string, required: true}
   merge_github:
     uses: github.merge-pr
     needs: [address_comments]
-    when: ${{ nodes.address_comments.outputs.ready_to_merge }}
+    when: ${{ nodes.address_comments.outputs.ready_for_github }}
     with:
       repository: ${{ inputs.repository }}
       number: ${{ inputs.request_number }}
@@ -70,7 +71,7 @@ nodes:
   merge_gitlab:
     uses: gitlab.merge-mr
     needs: [address_comments]
-    when: ${{ inputs.use_gitlab }}
+    when: ${{ nodes.address_comments.outputs.ready_for_gitlab }}
     with:
       project: ${{ inputs.repository }}
       iid: ${{ inputs.request_number }}

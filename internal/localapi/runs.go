@@ -105,6 +105,9 @@ func (m *RunManager) CommitIntent(ctx context.Context, req CreateRunRequest) (La
 		return LaunchIntent{}, err
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Idempotent check: if request_id already has a committed intent, return it.
 	if existing, err := m.loadIntent(m.intentByRequestPath(req.RequestID)); err == nil {
 		return existing, nil
@@ -275,7 +278,7 @@ func (m *RunManager) ReconcileIntents(ctx context.Context) error {
 		}
 		if intent.State == "committed" {
 			if _, err := m.EnsureHostStarted(ctx, intent); err != nil {
-				return err
+				continue // do not abort daemon startup if one stale intent cannot restart
 			}
 		}
 	}
@@ -297,10 +300,18 @@ func (m *RunManager) saveIntent(intent LaunchIntent) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(m.intentByRequestPath(intent.RequestID), data, 0600); err != nil {
+	if err := writeAtomic(m.intentByRequestPath(intent.RequestID), data); err != nil {
 		return err
 	}
-	return os.WriteFile(m.intentByAttemptPath(intent.AttemptID), data, 0600)
+	return writeAtomic(m.intentByAttemptPath(intent.AttemptID), data)
+}
+
+func writeAtomic(dst string, data []byte) error {
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 func (m *RunManager) loadIntent(path string) (LaunchIntent, error) {

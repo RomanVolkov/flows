@@ -63,7 +63,7 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 		}
 	}
 
-	// Backup store and swap bundle, keeping prevApp + storeBak until validation passes.
+	// Backup store (including -wal and -shm) and swap bundle, keeping prevApp + backups until validation passes.
 	var storeBak string
 	if opts.StorePath != "" {
 		if _, err := os.Stat(opts.StorePath); err == nil {
@@ -74,6 +74,13 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 			storeBak = opts.StorePath + ".bak"
 			if err := os.WriteFile(storeBak, data, 0600); err != nil {
 				return fmt.Errorf("backup store: %w", err)
+			}
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if extra, err := os.ReadFile(opts.StorePath + suffix); err == nil {
+					if err := os.WriteFile(storeBak+suffix, extra, 0600); err != nil {
+						return fmt.Errorf("backup store %s: %w", suffix, err)
+					}
+				}
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("stat store: %w", err)
@@ -91,11 +98,15 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 			_ = os.Rename(prevApp, appDir)
 		}
 		if storeBak != "" {
-			// Remove stale WAL/SHM files before restoring the SQLite backup.
-			_ = os.Remove(opts.StorePath + "-wal")
-			_ = os.Remove(opts.StorePath + "-shm")
 			if data, err := os.ReadFile(storeBak); err == nil {
 				_ = os.WriteFile(opts.StorePath, data, 0600)
+			}
+			for _, suffix := range []string{"-wal", "-shm"} {
+				if extra, err := os.ReadFile(storeBak + suffix); err == nil {
+					_ = os.WriteFile(opts.StorePath+suffix, extra, 0600)
+				} else {
+					_ = os.Remove(opts.StorePath + suffix)
+				}
 			}
 		}
 	}
@@ -130,6 +141,8 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 	_ = os.RemoveAll(prevApp)
 	if storeBak != "" {
 		_ = os.Remove(storeBak)
+		_ = os.Remove(storeBak + "-wal")
+		_ = os.Remove(storeBak + "-shm")
 	}
 	return nil
 }

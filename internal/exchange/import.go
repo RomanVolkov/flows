@@ -58,7 +58,12 @@ func ImportBundle(ctx context.Context, home paths.Home, sourcePath string, opts 
 	if err := os.MkdirAll(stageRoot, 0700); err != nil {
 		return BundleImportReceipt{}, err
 	}
-	defer func() { _ = os.RemoveAll(stageRoot) }()
+	keepStage := false
+	defer func() {
+		if !keepStage {
+			_ = os.RemoveAll(stageRoot)
+		}
+	}()
 
 	for rel, data := range prev.payloads {
 		target := filepath.Join(stageRoot, filepath.FromSlash(rel))
@@ -105,6 +110,7 @@ func ImportBundle(ctx context.Context, home paths.Home, sourcePath string, opts 
 	if err := os.WriteFile(journalPath, jRaw, 0600); err != nil {
 		return BundleImportReceipt{}, err
 	}
+	keepStage = true
 
 	if opts.BeforeCommit != nil {
 		if err := opts.BeforeCommit(); err != nil {
@@ -120,7 +126,14 @@ func ImportBundle(ctx context.Context, home paths.Home, sourcePath string, opts 
 		pkgSrc := filepath.Join(stageRoot, filepath.FromSlash(pkg.Path))
 		revDir := library.RevisionPath(home, library.PackageKind(pkg.Kind), pkg.ID, pkg.Digest)
 		if _, err := os.Stat(revDir); os.IsNotExist(err) {
-			if err := copyStageTree(pkgSrc, revDir); err != nil {
+			tmpRev := revDir + ".tmp"
+			_ = os.RemoveAll(tmpRev)
+			if err := copyStageTree(pkgSrc, tmpRev); err != nil {
+				_ = os.RemoveAll(tmpRev)
+				return BundleImportReceipt{}, err
+			}
+			if err := os.Rename(tmpRev, revDir); err != nil {
+				_ = os.RemoveAll(tmpRev)
 				return BundleImportReceipt{}, err
 			}
 		}

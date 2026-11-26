@@ -41,7 +41,7 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 	cliDst := filepath.Join(opts.HomeDir, ".local", "bin", "flows")
 	configDir := filepath.Join(opts.HomeDir, ".config", "flows")
 	specDst := filepath.Join(configDir, "spec", "v1")
-	workflowsDst := filepath.Join(opts.HomeDir, ".local", "share", "flows", "workflows")
+	workflowsDst := filepath.Join(configDir, "workflows")
 	logDir := filepath.Join(opts.HomeDir, "Library", "Logs", "Flows")
 	label := DefaultLabel(opts.HomeDir, opts.IsDevHome)
 	plistPath := filepath.Join(opts.HomeDir, "Library", "LaunchAgents", label+".plist")
@@ -86,12 +86,16 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 		}
 	}
 
-	// 5. Register launchd service.
+	// 5. Register launchd service (only pass --home for isolated dev homes).
 	daemonBin := filepath.Join(appDst, "Contents", "MacOS", "flowsd")
+	launchdHome := ""
+	if opts.IsDevHome {
+		launchdHome = filepath.Join(opts.HomeDir, ".flows-dev")
+	}
 	if err := RegisterLaunchd(ctx, opts.Runner, plistPath, LaunchdConfig{
 		Label:     label,
 		DaemonBin: daemonBin,
-		HomeDir:   opts.HomeDir,
+		HomeDir:   launchdHome,
 		LogDir:    logDir,
 	}); err != nil {
 		return Manifest{}, fmt.Errorf("step register launchd: %w", err)
