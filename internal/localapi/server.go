@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +37,11 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	}
 	defer state.Close()
 
+	sessions := NewSessionManager(state, home.State)
+	if _, err := sessions.Reconcile(ctx); err != nil {
+		return fmt.Errorf("reconcile sessions: %w", err)
+	}
+
 	listener, err := listen(home.Socket())
 	if err != nil {
 		return err
@@ -45,7 +51,7 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	defer stop()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
-		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state),
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions),
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -105,7 +111,7 @@ func listen(path string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func handler(version Version, shutdown context.CancelFunc, state *store.Store) http.Handler {
+func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
@@ -147,7 +153,13 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store) h
 				writeJSON(w, http.StatusOK, Health{Status: "stopping"})
 				shutdown()
 			}
+		case "/v1/sessions":
+			handleSessions(w, r, sessions)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/v1/sessions/") {
+				handleSessions(w, r, sessions)
+				return
+			}
 			writeError(w, http.StatusNotFound, "not_found", "unknown service endpoint")
 		}
 	})
