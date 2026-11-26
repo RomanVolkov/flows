@@ -1,0 +1,91 @@
+schema: flows/v1
+id: watch-change
+version: 1.0.0
+inputs:
+  repository:
+    type: string
+    required: true
+  request_number:
+    type: integer
+    required: true
+  expected_head_sha:
+    type: string
+    required: true
+  use_github:
+    type: boolean
+    default: true
+  use_gitlab:
+    type: boolean
+    default: false
+  ticket_id:
+    type: string
+    required: true
+  chat_channel:
+    type: string
+    default: engineering
+  chat_topic:
+    type: string
+    required: true
+nodes:
+  wait_for_readiness:
+    uses: core.wait
+    with:
+      interval: 30s
+      deadline: 4h
+  inspect_github:
+    uses: github.get-pull-request
+    needs: [wait_for_readiness]
+    when: ${{ inputs.use_github }}
+    with:
+      repository: ${{ inputs.repository }}
+      number: ${{ inputs.request_number }}
+  inspect_gitlab:
+    uses: gitlab.get-merge-request
+    needs: [wait_for_readiness]
+    when: ${{ inputs.use_gitlab }}
+    with:
+      project: ${{ inputs.repository }}
+      iid: ${{ inputs.request_number }}
+  address_comments:
+    uses: core.harness
+    needs: [inspect_github, inspect_gitlab]
+    with:
+      harness: claude
+      prompt_template: ../prompts/address-comments.md
+      arguments:
+        repository: ${{ inputs.repository }}
+        request_number: ${{ inputs.request_number }}
+        expected_head_sha: ${{ inputs.expected_head_sha }}
+    outputs:
+      ready_to_merge: {type: boolean, required: true}
+      head_sha: {type: string, required: true}
+  merge_github:
+    uses: github.merge-pr
+    needs: [address_comments]
+    when: ${{ inputs.use_github }}
+    with:
+      repository: ${{ inputs.repository }}
+      number: ${{ inputs.request_number }}
+      expected_head_sha: ${{ nodes.address_comments.outputs.head_sha }}
+  merge_gitlab:
+    uses: gitlab.merge-mr
+    needs: [address_comments]
+    when: ${{ inputs.use_gitlab }}
+    with:
+      project: ${{ inputs.repository }}
+      iid: ${{ inputs.request_number }}
+      expected_head_sha: ${{ nodes.address_comments.outputs.head_sha }}
+  transition_done:
+    uses: jira.transition-issue
+    needs: [merge_github, merge_gitlab]
+    with:
+      key: ${{ inputs.ticket_id }}
+      target_status: Done
+  resolve_topic:
+    uses: zulip.resolve-topic
+    needs: [merge_github, merge_gitlab]
+    with:
+      channel: ${{ inputs.chat_channel }}
+      topic: ${{ inputs.chat_topic }}
+outputs:
+  merged_head: ${{ nodes.address_comments.outputs.head_sha }}
