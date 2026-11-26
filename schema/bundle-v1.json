@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flows.dev/schema/bundle-v1.json",
+  "title": "Flows Portable Bundle Manifest v1",
+  "type": "object",
+  "required": ["schema", "entry_kind", "entry_id", "engine_compatibility", "packages", "payload_checksums"],
+  "properties": {
+    "schema": { "type": "string", "const": "flows/bundle/v1" },
+    "entry_kind": { "type": "string", "enum": ["workflow", "tool"] },
+    "entry_id": { "type": "string", "minLength": 1 },
+    "engine_compatibility": { "type": "string", "minLength": 1 },
+    "packages": { "type": "array" },
+    "dependency_lock": { "type": "object" },
+    "payload_checksums": { "type": "object" },
+    "schemas": { "type": "object" },
+    "external_prerequisites": { "type": "object" },
+    "licenses": { "type": "array", "items": { "type": "string" } }
+  }
+}
