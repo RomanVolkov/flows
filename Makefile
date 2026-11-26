@@ -10,7 +10,7 @@ COMMANDS := flows flowsd flows-host
 export GOTOOLCHAIN := $(addprefix go,$(GO_VERSION))
 export MACOSX_DEPLOYMENT_TARGET := $(MACOS_DEPLOYMENT_TARGET)
 
-.PHONY: build test lint check doctor
+.PHONY: build test lint check doctor install-spec
 
 build:
 	@mkdir -p "$(BIN)"
@@ -35,5 +35,13 @@ check: test lint
 
 doctor:
 	@sh scripts/doctor.sh "$(GO)" "$(STATICCHECK)"
+
+install-spec:
+	@mkdir -p "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1"
+	@cp -R spec/v1/* "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/"
+	@cp schema/workflow-v1.json "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/workflow.schema.json"
+	@cp schema/tool-v1.json "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/tool.schema.json"
+	@mkdir -p "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/sdk/go"
+	@cp -R sdk/go/* "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/sdk/go/"
 
 include build/macos.mk

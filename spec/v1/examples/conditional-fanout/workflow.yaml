@@ -1,0 +1,32 @@
+schema: flows/v1
+id: conditional-fanout-example
+version: 1.0.0
+inputs:
+  items:
+    type: array
+    required: true
+  run_checks:
+    type: boolean
+    default: true
+nodes:
+  prepare:
+    uses: core.command
+    with:
+      command: /bin/echo
+      args: ["prepared"]
+  check_item:
+    uses: core.harness
+    when: ${{ inputs.run_checks }}
+    needs: [prepare]
+    for_each:
+      items: ${{ inputs.items }}
+      key: ${{ item.id }}
+    with:
+      harness: claude
+      prompt_template: ./prompts/check.md
+      arguments:
+        item_id: ${{ item.id }}
+    outputs:
+      passed: {type: boolean, required: true}
+outputs:
+  checks: ${{ nodes.check_item.outputs }}

@@ -1,0 +1,9 @@
+schema: flows/v1
+id: nested-sub-example
+version: 1.0.0
+nodes:
+  step:
+    uses: core.command
+    with:
+      command: /bin/echo
+      args: ["sub"]

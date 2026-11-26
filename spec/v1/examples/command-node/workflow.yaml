@@ -1,0 +1,16 @@
+schema: flows/v1
+id: command-node-example
+version: 1.0.0
+inputs:
+  message:
+    type: string
+    default: hello-flows
+nodes:
+  run_echo:
+    uses: core.command
+    with:
+      command: /bin/echo
+      args:
+        - ${{ inputs.message }}
+outputs:
+  exit_code: ${{ nodes.run_echo.outputs.exit_code }}

@@ -22,6 +22,9 @@ func run() int {
 	if len(args) >= 2 && args[0] == "validate" {
 		return runValidate(args[1:])
 	}
+	if len(args) >= 2 && args[0] == "spec" {
+		return runSpec(args[1:])
+	}
 	if len(args) == 1 {
 		switch args[0] {
 		case "status", "shutdown":
@@ -69,6 +72,34 @@ func runValidate(args []string) int {
 		return 0
 	}
 	return 1
+}
+
+func runSpec(args []string) int {
+	home, err := paths.Resolve()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	switch args[0] {
+	case "path":
+		fmt.Fprintln(os.Stdout, cli.SpecPath(home, cli.SpecVersion))
+		return 0
+	case "show":
+		topic := "authoring"
+		if len(args) > 1 {
+			topic = args[1]
+		}
+		data, err := cli.SpecShow(home, topic)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Fprintln(os.Stdout, string(data))
+		return 0
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: flows spec {path|show [authoring|protocol|workflow|tool]}")
+		return 2
+	}
 }
 
 func service(action string) error {

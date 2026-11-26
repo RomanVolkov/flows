@@ -1,0 +1,18 @@
+schema: flows/tool/v1
+id: example-sdk
+version: 1.0.0
+owner: flows
+description: Offline buildable Go SDK example tool
+operations:
+  - id: example-sdk.greet
+    description: Return a greeting
+    execution_kind: plugin
+    read_only: true
+    input_schema:
+      type: object
+      properties:
+        name: {type: string}
+    output_schema:
+      type: object
+      properties:
+        greeting: {type: string}

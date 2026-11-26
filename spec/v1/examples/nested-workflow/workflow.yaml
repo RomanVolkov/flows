@@ -1,0 +1,12 @@
+schema: flows/v1
+id: nested-workflow-example
+version: 1.0.0
+nodes:
+  child:
+    workflow: sub
+  after:
+    uses: core.command
+    needs: [child]
+    with:
+      command: /bin/echo
+      args: ["done"]
