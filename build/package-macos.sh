@@ -15,6 +15,9 @@ mkdir -p "${CONTENTS}/MacOS" \
   "${CONTENTS}/Resources/licenses"
 
 cp build/macos/Info.plist "${CONTENTS}/Info.plist"
+if [ -f build/macos/AppIcon.icns ]; then
+  cp build/macos/AppIcon.icns "${CONTENTS}/Resources/AppIcon.icns"
+fi
 if command -v plutil >/dev/null 2>&1; then
   plutil -replace CFBundleShortVersionString -string "${VERSION}" "${CONTENTS}/Info.plist"
 fi
