@@ -164,6 +164,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			handleLibrary(w, r, home, nil)
 		case "/v1/settings", "/v1/settings/validate":
 			SettingsHandler(home)(w, r)
+		case "/v1/usage", "/v1/usage/daily":
+			UsageHandler(state)(w, r)
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
