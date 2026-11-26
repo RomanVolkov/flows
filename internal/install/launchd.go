@@ -16,10 +16,12 @@ import (
 
 // LaunchdConfig configures per-user launchd daemon registration.
 type LaunchdConfig struct {
-	Label     string
-	DaemonBin string
-	HomeDir   string
-	LogDir    string
+	Label      string
+	DaemonBin  string
+	HomeDir    string
+	LogDir     string
+	ConfigHome string
+	SearchPath string
 }
 
 // DefaultLabel returns dev.flows.daemon for the standard home or an isolated
@@ -38,6 +40,16 @@ func RenderLaunchdPlist(cfg LaunchdConfig) string {
 	if cfg.HomeDir != "" {
 		homeArgs = fmt.Sprintf("\t\t<string>run</string>\n\t\t<string>--home</string>\n\t\t<string>%s</string>", html.EscapeString(cfg.HomeDir))
 	}
+	var entries []string
+	for _, pair := range [][2]string{{"PATH", cfg.SearchPath}, {"XDG_CONFIG_HOME", cfg.ConfigHome}} {
+		if pair[1] != "" {
+			entries = append(entries, fmt.Sprintf("<key>%s</key><string>%s</string>", pair[0], html.EscapeString(pair[1])))
+		}
+	}
+	var environment string
+	if len(entries) > 0 {
+		environment = "<key>EnvironmentVariables</key>\n\t<dict>" + strings.Join(entries, "\n\t") + "</dict>\n\t"
+	}
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -49,7 +61,7 @@ func RenderLaunchdPlist(cfg LaunchdConfig) string {
 		<string>%s</string>
 %s
 	</array>
-	<key>RunAtLoad</key>
+	%s<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
 	<true/>
@@ -63,6 +75,7 @@ func RenderLaunchdPlist(cfg LaunchdConfig) string {
 		html.EscapeString(cfg.Label),
 		html.EscapeString(cfg.DaemonBin),
 		homeArgs,
+		environment,
 		html.EscapeString(filepath.Join(cfg.LogDir, "flowsd.out.log")),
 		html.EscapeString(filepath.Join(cfg.LogDir, "flowsd.err.log")),
 	)
@@ -91,6 +104,7 @@ func RegisterLaunchd(ctx context.Context, runner LaunchdRunner, plistPath string
 	if err := os.MkdirAll(cfg.LogDir, 0755); err != nil {
 		return fmt.Errorf("create log dir: %w", err)
 	}
+	previous, _ := os.ReadFile(plistPath)
 	content := RenderLaunchdPlist(cfg)
 	if err := os.WriteFile(plistPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write launchd plist: %w", err)
@@ -98,7 +112,12 @@ func RegisterLaunchd(ctx context.Context, runner LaunchdRunner, plistPath string
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	// Detect if already loaded/running before bootstrapping.
 	if _, err := runner.Run(ctx, "print", domain+"/"+cfg.Label); err == nil {
-		return nil
+		if string(previous) == content {
+			return nil
+		}
+		if out, err := runner.Run(ctx, "bootout", domain+"/"+cfg.Label); err != nil {
+			return fmt.Errorf("reload daemon: %w (%s)", err, out)
+		}
 	}
 	if out, err := runner.Run(ctx, "bootstrap", domain, plistPath); err != nil {
 		return fmt.Errorf("launchctl bootstrap failed: %w (%s)", err, out)

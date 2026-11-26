@@ -1,0 +1,93 @@
+name: Release Flows
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: flows-release
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: desktop/app/frontend/package-lock.json
+      - name: Select pinned SDK and release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
+          echo "VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+          source build/toolchain.lock
+          for developer in /Applications/Xcode*.app/Contents/Developer; do
+            if [[ "$(DEVELOPER_DIR="$developer" xcrun --sdk macosx --show-sdk-version)" == "$MACOS_SDK_VERSION" ]]; then
+              echo "DEVELOPER_DIR=$developer" >> "$GITHUB_ENV"
+              exit 0
+            fi
+          done
+          echo "macOS SDK $MACOS_SDK_VERSION is required" >&2
+          exit 1
+      - uses: actions/cache@v4
+        with:
+          path: .deps
+          key: flows-native-${{ runner.arch }}-${{ hashFiles('build/toolchain.lock','scripts/native-deps.sh','scripts/font-family.swift','desktop/assets/fonts/OFL.txt') }}
+      - run: make desktop-check integration package
+      - run: sh packaging/macos/package.sh
+      - name: Exercise the user-domain installer
+        run: |
+          /usr/sbin/installer -pkg "build/dist/Flows-$VERSION-darwin-arm64.pkg" -target CurrentUserHomeDirectory
+          "$HOME/.local/bin/flows" status
+          "$HOME/.local/bin/flows" version | grep -F "$VERSION"
+          codesign --verify --deep --strict "$HOME/Applications/Flows.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer
+          path: build/dist/*.pkg*
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer
+          path: release
+      - name: Publish installer and update the tap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          pkg="Flows-$version-darwin-arm64.pkg"
+          (cd release && sha256sum -c "$pkg.sha256")
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" "release/$pkg" "release/$pkg.sha256" --verify-tag --generate-notes
+          fi
+          # On retries, use the immutable published asset as the source of its checksum.
+          mkdir published
+          gh release download "$GITHUB_REF_NAME" -p "$pkg" --dir published
+          sha=$(sha256sum "published/$pkg" | cut -d' ' -f1)
+          mkdir -p Casks
+          if [[ -f Casks/flows.rb ]]; then
+            current=$(sed -n 's/^  version "\(.*\)"$/\1/p' Casks/flows.rb)
+            [[ "$(printf '%s\n' "$version" "$current" | sort -V | tail -1)" == "$version" ]] || exit 0
+          fi
+          sed -e "s|@VERSION@|$version|g" -e "s|@SHA256@|$sha|g" -e "s|@REPO@|$GITHUB_REPOSITORY|g" packaging/flows.rb.in > Casks/flows.rb
+          ruby -c Casks/flows.rb
+          git add Casks/flows.rb
+          if ! git diff --cached --quiet; then
+            git -c user.name=github-actions -c user.email=41898282+github-actions[bot]@users.noreply.github.com commit -m "Update Flows cask to $version"
+            git push
+          fi

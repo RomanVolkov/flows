@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/romanvolkov/flows/internal/config"
 	"github.com/romanvolkov/flows/internal/harness"
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/paths"
@@ -113,6 +114,57 @@ func (m *RunManager) CommitIntent(ctx context.Context, req CreateRunRequest) (La
 		return existing, nil
 	}
 
+	cmd := req.Command
+	if cmd == "" {
+		settings, err := config.LoadSettings(m.home.Settings())
+		if err != nil {
+			return LaunchIntent{}, err
+		}
+		configured := config.ProfileFromSettings(req.Harness, settings)
+		profile := config.ResolveEffectiveProfile(req.Harness, &req.Profile, nil, &configured)
+		adapter, err := harness.ForKind(req.Harness)
+		if err != nil {
+			return LaunchIntent{}, err
+		}
+		caps, err := adapter.Probe(ctx, profile.Executable)
+		if err != nil {
+			return LaunchIntent{}, err
+		}
+		if req.WorkDir == "" {
+			req.WorkDir = settings.DefaultDirectory
+		}
+		if req.WorkDir == "" {
+			base := filepath.Join(m.home.State, "chats")
+			if err := os.MkdirAll(base, 0700); err != nil {
+				return LaunchIntent{}, err
+			}
+			req.WorkDir, err = os.MkdirTemp(base, "session-")
+			if err != nil {
+				return LaunchIntent{}, err
+			}
+		} else {
+			if req.WorkDir == "~" {
+				req.WorkDir = m.home.Environment()["HOME"]
+			} else if tail, ok := strings.CutPrefix(req.WorkDir, "~/"); ok {
+				req.WorkDir = filepath.Join(m.home.Environment()["HOME"], tail)
+			}
+			fi, err := os.Stat(req.WorkDir)
+			if err != nil {
+				return LaunchIntent{}, err
+			}
+			if !filepath.IsAbs(req.WorkDir) || !fi.IsDir() {
+				return LaunchIntent{}, errors.New("choose an absolute working directory")
+			}
+		}
+		resolved, err := adapter.BuildLaunch(caps, harness.LaunchSpec{Profile: profile, WorkDir: req.WorkDir, Prompt: req.Prompt})
+		if err != nil {
+			return LaunchIntent{}, err
+		}
+		cmd = resolved.Argv[0]
+		req.Args = append(resolved.Argv[1:], req.Args...)
+		req.Prompt = resolved.PTYPrompt
+		req.Profile = profile
+	}
 	runID, err := m.store.CreateRun(ctx, nil)
 	if err != nil {
 		return LaunchIntent{}, err
@@ -131,10 +183,6 @@ func (m *RunManager) CommitIntent(ctx context.Context, req CreateRunRequest) (La
 	}
 
 	sessID := "sess-" + shortHex(8)
-	cmd := req.Command
-	if cmd == "" {
-		cmd = string(req.Harness)
-	}
 	sock := filepath.Join(m.home.Runtime, "h-"+sessID+".sock")
 
 	intent := LaunchIntent{
@@ -361,4 +409,35 @@ func shortHex(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// preview returns the live replay buffer or the final persisted screen for an attempt.
+func (m *RunManager) preview(w http.ResponseWriter, attempt string) {
+	if attempt == "" || safeID(attempt) != attempt {
+		writeError(w, 404, "not_found", "Unknown attempt")
+		return
+	}
+	m.mu.Lock()
+	h := m.hosts[attempt]
+	m.mu.Unlock()
+	var data []byte
+	var err error
+	if h != nil {
+		data = h.Preview()
+	} else {
+		var intent LaunchIntent
+		intent, err = m.loadIntent(m.intentByAttemptPath(attempt))
+		if err == nil {
+			data, err = os.ReadFile(filepath.Join(m.home.State, "hosts", intent.SessionID, "snapshot.bin"))
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, 200, map[string]string{"screen": ""})
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "preview_failed", "Could not read the session preview")
+		return
+	}
+	writeJSON(w, 200, map[string][]byte{"screen": data})
 }

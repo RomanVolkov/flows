@@ -63,7 +63,7 @@ func (a agyAdapter) BuildLaunch(caps Capabilities, spec LaunchSpec) (ResolvedLau
 		argv = append(argv, "--conversation", convID)
 	}
 	if spec.Prompt != "" {
-		argv = append(argv, spec.Prompt)
+		argv = append(argv, "--prompt-interactive", spec.Prompt)
 	}
 
 	return ResolvedLaunch{

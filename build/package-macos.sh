@@ -26,11 +26,14 @@ fi
 # Build core binaries (CLI in Resources/bin/flows so it never collides with MacOS/Flows on case-insensitive APFS).
 go build -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=${VERSION}" \
   -o "${CONTENTS}/Resources/bin/flows" "./cmd/flows"
-for name in flowsd flows-host; do
+make package-daemon
+cp build/bin/flowsd-release "${CONTENTS}/MacOS/flowsd"
+for name in flows-host; do
   go build -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=${VERSION}" \
     -o "${CONTENTS}/MacOS/${name}" "./cmd/${name}"
 done
-clang -fobjc-arc -framework AppKit -framework CoreText desktop/macos/main.m -o "${CONTENTS}/MacOS/Flows"
+make desktop
+cp build/bin/Flows-desktop "${CONTENTS}/MacOS/Flows"
 
 # Prebuild shipped plugins so the packaged app runs without a compiler.
 for plugin in git github gitlab jira youtrack zulip; do

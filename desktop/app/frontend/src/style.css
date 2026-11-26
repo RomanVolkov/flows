@@ -1,0 +1,102 @@
+:root {--radius:8px;--fast:.15s;--sans:"Instrument Sans",-apple-system,sans-serif;color-scheme:dark}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #app { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input, textarea, select, pre, [contenteditable="true"] { user-select: text; -webkit-user-select: text; }
+
+::selection { background: var(--accent); color: var(--accent-ink); }
+
+button, .button {
+  height: 30px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 12px var(--mono);
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--bg-solid) 72%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--fast), border-color var(--fast), color var(--fast);
+}
+button:hover:not(:disabled) { background: var(--hover); border-color: var(--text-3); color: var(--text); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); color: var(--accent); background: var(--accent-glow); }
+button.primary:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+button.quiet { border-color: transparent; background: transparent; backdrop-filter: none; }
+
+input, textarea, select {
+  font: 13px var(--mono);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  padding: 0 10px;
+  height: 30px;
+  outline: none;
+  transition: border-color var(--fast);
+}
+textarea { height: auto; padding: 8px 10px; resize: vertical; }
+input::placeholder, textarea::placeholder { color: var(--text-3); }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); }
+
+/* a small uppercase mono label */
+.label {
+  font: 600 11px var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.mono { font-family: var(--mono); }
+.dim { color: var(--text-3); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+.app{height:100%;display:flex;flex-direction:column}
+header,nav{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.top{--wails-draggable:drag;padding:8px 12px 0 84px}
+.top strong{font:600 13px var(--mono);color:var(--accent);letter-spacing:.12em;text-transform:uppercase}
+nav,button{--wails-draggable:no-drag}
+main{display:flex;flex:1;min-height:0;gap:8px;padding:8px}
+.canvas,aside,dialog{border:1px solid var(--border-subtle);border-radius:var(--radius)}
+.canvas{position:relative;min-width:0;flex:1;overflow:hidden}
+.empty{position:absolute;inset:0;display:grid;align-content:center;justify-items:center;gap:14px}
+h1,h2{font-size:19px;font-weight:550;letter-spacing:-.025em}
+h3{margin:24px 0 8px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3)}
+aside,dialog{background:var(--elevated);padding:18px;overflow:auto}
+aside{width:min(40%,440px);overflow-wrap:anywhere}
+aside header{margin-bottom:4px}
+dl{display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:18px 0;font:12px var(--mono)}
+dt,footer,aside p{color:var(--text-3)}
+dd{text-align:right;user-select:text}
+.row{display:flex;width:100%;justify-content:space-between;margin:4px 0;padding:5px 8px;font:12px var(--mono)}
+footer,.notice{font:11px var(--mono);padding:0 12px 8px}
+.notice{color:var(--accent);padding-top:8px}
+dialog{margin:auto;width:min(420px,90vw);color:var(--text)}
+dialog::backdrop{background:color-mix(in srgb,var(--bg) 65%,transparent);backdrop-filter:blur(4px)}
+form,label{display:grid;gap:6px}
+form{gap:14px;margin-top:20px}
+form label{font:12px var(--mono);color:var(--text-2)}
+form button{justify-self:end}
+[role=alert]{color:var(--danger);margin:12px 0}
+.top{padding:8px 8px 0 82px;height:38px}
+.top small{opacity:.65;font-size:11px}
+aside{padding:14px;font-size:13px}
+aside h2{font:600 15px var(--sans)}
+aside h3{margin:18px 0 6px}
+aside dl{grid-template-columns:3.5rem 1fr;gap:4px 10px;margin:14px 0;align-items:baseline}
+aside dd{text-align:left;color:var(--text-2)}

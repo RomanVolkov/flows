@@ -1,0 +1,28 @@
+cask "flows" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/@REPO@/releases/download/v#{version}/Flows-#{version}-darwin-arm64.pkg"
+  name "Flows"
+  desc "Canvas workspace for AI harnesses, tools, and workflows"
+  homepage "https://github.com/@REPO@"
+
+  depends_on arch: :arm64
+  depends_on macos: ">= :sonoma"
+  container type: :naked
+
+  installer script: {
+    executable: "/usr/sbin/installer",
+    args:       ["-pkg", "#{staged_path}/Flows-#{version}-darwin-arm64.pkg", "-target", "CurrentUserHomeDirectory"],
+    sudo:       false,
+  }
+  binary "#{Dir.home}/Applications/Flows.app/Contents/Resources/bin/flows"
+
+  uninstall launchctl: "dev.flows.daemon",
+            quit:      "dev.flows.app",
+            delete:    [
+              "~/.local/bin/flows",
+              "~/Applications/Flows.app",
+              "~/Library/LaunchAgents/dev.flows.daemon.plist",
+            ]
+end

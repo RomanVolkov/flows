@@ -24,8 +24,17 @@ plugins:
 		$(GO) build -trimpath -o "$(BIN)/plugins/$$p-plugin" "./plugins/$$p/cmd/plugin"; \
 	done
 
-desktop:
-	@clang -fsyntax-only -fobjc-arc desktop/macos/WorkspaceView.m desktop/macos/CanvasView.m desktop/macos/CanvasGestures.m
+FRONTEND := desktop/app/frontend
+$(FRONTEND)/node_modules/.package-lock.json: $(FRONTEND)/package-lock.json $(FRONTEND)/package.json
+	@npm --prefix $(FRONTEND) ci --no-audit --no-fund
+
+desktop: $(FRONTEND)/node_modules/.package-lock.json
+	@npm --prefix $(FRONTEND) run build
+	@$(GO) build -tags 'desktop production' -ldflags '-extldflags "-framework UniformTypeIdentifiers"' -trimpath -o "$(BIN)/Flows-desktop" ./desktop/app
+
+.PHONY: package-daemon
+package-daemon: libghostty
+	@CGO_CFLAGS='-I "$(GHOSTTY_DIR)/include"' CGO_LDFLAGS='"$(GHOSTTY_DIR)/lib/libghostty-vt.a"' $(GO) build -tags ghostty -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=$(VERSION)" -o "$(BIN)/flowsd-release" ./cmd/flowsd
 
 package:
 	@VERSION="$(VERSION)" sh build/package-macos.sh
@@ -36,15 +45,18 @@ install: package
 	@cp -R build/dist/Flows.app "$${HOME}/Applications/Flows.app"
 	@ln -sf "$${HOME}/Applications/Flows.app/Contents/Resources/bin/flows" "$${HOME}/.local/bin/flows"
 	@$(MAKE) install-spec
+	@env -u FLOWS_HOME "$${HOME}/Applications/Flows.app/Contents/MacOS/flowsd" register
+	@env -u FLOWS_HOME "$${HOME}/.local/bin/flows" status
 
 uninstall:
+	@if launchctl print "gui/$$(id -u)/dev.flows.daemon" >/dev/null 2>&1; then launchctl bootout "gui/$$(id -u)/dev.flows.daemon"; fi
+	@rm -f "$${HOME}/Library/LaunchAgents/dev.flows.daemon.plist"
 	@rm -rf "$${HOME}/Applications/Flows.app" "$${HOME}/.local/bin/flows"
 
-desktop-check:
+desktop-check: desktop
+	@npm --prefix $(FRONTEND) run check
+	@npm --prefix $(FRONTEND) test
 	@$(GO) test ./desktop/...
-	@clang -fsyntax-only -fobjc-arc desktop/macos/WorkspaceView.m desktop/macos/CanvasView.m desktop/macos/CanvasGestures.m
-	@clang -fobjc-arc -framework AppKit desktop/macos/WorkspaceTests.m -o "$(BIN)/WorkspaceTests"
-	@"$(BIN)/WorkspaceTests"
 
 integration:
 	@$(GO) test ./integration/...
@@ -68,6 +80,7 @@ doctor:
 	@sh scripts/doctor.sh "$(GO)" "$(STATICCHECK)"
 
 install-spec:
+	@install -d -m 700 "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows" "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec"
 	@mkdir -p "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1"
 	@cp -R spec/v1/* "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/"
 	@cp schema/workflow-v1.json "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/workflow.schema.json"

@@ -36,7 +36,7 @@ const (
 )
 
 var (
-	ErrProcessMismatch = errors.New("process identity mismatch or process exited")
+	ErrProcessMismatch  = errors.New("process identity mismatch or process exited")
 	ErrCheckoutNotReady = errors.New("host identity not yet persisted")
 )
 
@@ -210,6 +210,19 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 		return nil, err
 	}
 
+	var release func()
+	if cfg.State == nil {
+		cfg.State, release, err = newScreen()
+		if err != nil {
+			listener.Close()
+			return nil, err
+		}
+		defer func() {
+			if release != nil {
+				release()
+			}
+		}()
+	}
 	winsize := pty.Winsize{Rows: cfg.Rows, Cols: cfg.Cols}
 	if cfg.State != nil {
 		if err := cfg.State.Resize(winsize); err != nil {
@@ -290,7 +303,14 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 		_ = h.server.Serve(listener)
 	}()
 
-	go h.run(ctx)
+	cleanup := release
+	release = nil
+	go func() {
+		h.run(ctx)
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
 
 	if cfg.InitialPrompt != "" {
 		if err := h.DeliverPrompt(cfg.InitialPrompt); err != nil {
@@ -476,6 +496,8 @@ func (h *Host) run(ctx context.Context) {
 	h.record.ExitedAt = now
 
 	snap := h.snapshotLocked()
+	h.cfg.State = nil
+	h.scrollback = snap
 	_ = writeFileAtomic(h.snapshotPath, snap, 0600)
 
 	receipt := ExitReceipt{
@@ -540,6 +562,12 @@ func (h *Host) appendScrollbackLocked(chunk []byte) {
 	}
 }
 
+// Preview returns the terminal replay without attaching or claiming input.
+func (h *Host) Preview() []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.snapshotLocked()
+}
 func (h *Host) snapshotLocked() []byte {
 	if h.cfg.State != nil {
 		if replay, err := h.cfg.State.Replay(); err == nil {
@@ -599,14 +627,14 @@ type ArtifactRef struct {
 
 // OutboxRecord is a durable host-owned completion record awaiting daemon delivery.
 type OutboxRecord struct {
-	AttemptID string        `json:"attempt_id"`
-	EventID   string        `json:"event_id"`
-	Status    string        `json:"status"`
+	AttemptID string          `json:"attempt_id"`
+	EventID   string          `json:"event_id"`
+	Status    string          `json:"status"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
-	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
-	Digest    string        `json:"digest"`
-	CreatedAt int64         `json:"created_at"`
-	Delivered bool          `json:"delivered"`
+	Artifacts []ArtifactRef   `json:"artifacts,omitempty"`
+	Digest    string          `json:"digest"`
+	CreatedAt int64           `json:"created_at"`
+	Delivered bool            `json:"delivered"`
 }
 
 // LocalReceipt confirms durable local capture of a completion event and its artifacts.

@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+# This product installs into the current user's home domain.
+test "$(id -u)" != 0
+unset FLOWS_HOME
+app="$HOME/Applications/Flows.app"
+cli="$app/Contents/Resources/bin/flows"
+link="$HOME/.local/bin/flows"
+mkdir -p "$HOME/.local/bin"
+if [ -e "$link" ] || [ -L "$link" ]; then
+    test "$(readlink "$link")" = "$cli" || { echo "CLI path already occupied: $link" >&2; exit 1; }
+else
+    ln -s "$cli" "$link"
+fi
+if xattr -p com.apple.quarantine "$app" >/dev/null 2>&1; then
+    xattr -dr com.apple.quarantine "$app"
+fi
+config="${XDG_CONFIG_HOME:-$HOME/.config}/flows"
+install -d -m 700 "$config" "$config/spec"
+mkdir -p "$config/spec/v1"
+cp -R "$app/Contents/Resources/spec/v1/." "$config/spec/v1/"
+job="gui/$(id -u)/dev.flows.daemon"
+if launchctl print "$job" >/dev/null 2>&1; then launchctl bootout "$job"; fi
+"$app/Contents/MacOS/flowsd" register
+"$cli" status

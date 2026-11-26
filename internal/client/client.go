@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -75,9 +76,25 @@ func (c *Client) request(ctx context.Context, method, path string, out any) erro
 }
 
 func (c *Client) send(ctx context.Context, method, path string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, "http://flows.local"+path, nil)
+	return c.sendBody(ctx, method, path, "")
+}
+
+// JSON sends a JSON request through the private daemon socket.
+func (c *Client) JSON(ctx context.Context, method, path, body string, out any) error {
+	resp, err := c.sendBody(ctx, method, path, body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+func (c *Client) sendBody(ctx context.Context, method, path, body string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://flows.local"+path, strings.NewReader(body))
 	if err != nil {
 		return nil, err
+	}
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

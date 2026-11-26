@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Flows</title>
+  <options customize="never" hostArchitectures="arm64"/>
+  <domains enable_anywhere="false" enable_currentUserHome="true" enable_localSystem="false"/>
+  <allowed-os-versions><os-version min="14.0"/></allowed-os-versions>
+  <choices-outline><line choice="flows"/></choices-outline>
+  <choice id="flows" visible="false"><pkg-ref id="dev.flows.desktop"/></choice>
+  <pkg-ref id="dev.flows.desktop">component.pkg</pkg-ref>
+</installer-gui-script>

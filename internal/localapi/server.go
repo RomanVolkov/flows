@@ -169,6 +169,12 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
+			if attempt, ok := strings.CutPrefix(r.URL.Path, "/v1/preview/"); ok && runs != nil {
+				if method(w, r, http.MethodGet) {
+					runs.preview(w, attempt)
+				}
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/v1/library/") {
 				handleLibrary(w, r, home, nil)
 				return
