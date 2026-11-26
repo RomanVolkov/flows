@@ -10,13 +10,32 @@ COMMANDS := flows flowsd flows-host
 export GOTOOLCHAIN := $(addprefix go,$(GO_VERSION))
 export MACOSX_DEPLOYMENT_TARGET := $(MACOS_DEPLOYMENT_TARGET)
 
-.PHONY: build test lint check doctor install-spec
+.PHONY: build plugins desktop package desktop-check integration test lint check doctor install-spec
 
 build:
 	@mkdir -p "$(BIN)"
 	@set -e; for name in $(COMMANDS); do \
 		$(GO) build -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=$(VERSION)" -o "$(BIN)/$$name" "./cmd/$$name"; \
 	done
+
+plugins:
+	@mkdir -p "$(BIN)/plugins"
+	@set -e; for p in git github gitlab jira youtrack zulip; do \
+		$(GO) build -trimpath -o "$(BIN)/plugins/$$p-plugin" "./plugins/$$p/cmd/plugin"; \
+	done
+
+desktop:
+	@clang -fsyntax-only -fobjc-arc desktop/macos/WorkspaceView.m desktop/macos/CanvasView.m desktop/macos/CanvasGestures.m
+
+package:
+	@VERSION="$(VERSION)" sh build/package-macos.sh
+
+desktop-check:
+	@$(GO) test ./desktop/...
+	@clang -fsyntax-only -fobjc-arc desktop/macos/WorkspaceView.m desktop/macos/CanvasView.m desktop/macos/CanvasGestures.m
+
+integration:
+	@$(GO) test ./integration/...
 
 test:
 	@set -e; for module in $(MODULES); do \
