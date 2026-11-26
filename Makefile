@@ -10,7 +10,7 @@ COMMANDS := flows flowsd flows-host
 export GOTOOLCHAIN := $(addprefix go,$(GO_VERSION))
 export MACOSX_DEPLOYMENT_TARGET := $(MACOS_DEPLOYMENT_TARGET)
 
-.PHONY: build plugins desktop package install desktop-check integration test lint check doctor install-spec
+.PHONY: build plugins desktop package install uninstall desktop-check integration test lint check doctor install-spec
 
 build:
 	@mkdir -p "$(BIN)"
@@ -36,6 +36,9 @@ install: package
 	@cp -R build/dist/Flows.app "$${HOME}/Applications/Flows.app"
 	@ln -sf "$${HOME}/Applications/Flows.app/Contents/MacOS/flows" "$${HOME}/.local/bin/flows"
 	@$(MAKE) install-spec
+
+uninstall:
+	@rm -rf "$${HOME}/Applications/Flows.app" "$${HOME}/.local/bin/flows"
 
 desktop-check:
 	@$(GO) test ./desktop/...
