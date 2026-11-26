@@ -26,6 +26,7 @@ export interface Edge {
 
 export interface Session {
   id: string
+  attempt?: string
   node: string
   agent: string
   mode: 'pty' | 'pipe'

@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/romanvolkov/flows/internal/config"
+	"github.com/romanvolkov/flows/internal/harness"
 	"github.com/romanvolkov/flows/internal/paths"
 	"github.com/romanvolkov/flows/internal/store"
 )
@@ -164,6 +166,29 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			handleLibrary(w, r, home, nil)
 		case "/v1/settings", "/v1/settings/validate":
 			SettingsHandler(home)(w, r)
+		case "/v1/harnesses":
+			if method(w, r, http.MethodGet) {
+				settings, err := config.LoadSettings(home.Settings())
+				if err != nil {
+					writeError(w, 500, "settings_error", "could not read settings")
+					return
+				}
+				type available struct {
+					ID      string          `json:"id"`
+					Version string          `json:"version"`
+					Profile harness.Profile `json:"profile"`
+				}
+				result := make([]available, 0, 3)
+				for _, kind := range []harness.Kind{harness.KindClaude, harness.KindCodex, harness.KindAgy} {
+					adapter, _ := harness.ForKind(kind)
+					profile := config.ProfileFromSettings(kind, settings)
+					caps, err := adapter.Probe(r.Context(), profile.Executable)
+					if err == nil {
+						result = append(result, available{ID: string(kind), Version: caps.Version, Profile: profile})
+					}
+				}
+				writeJSON(w, 200, result)
+			}
 		case "/v1/usage", "/v1/usage/daily":
 			UsageHandler(state)(w, r)
 		case "/v1/sessions":

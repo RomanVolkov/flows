@@ -1,3 +1,4 @@
+import { writable } from 'svelte/store'
 import { parse } from 'smol-toml'
 import scheme from '../../catppuccin-mocha-2.toml?raw'
 import type { Colors } from './canvas/render'
@@ -5,6 +6,8 @@ import type { Colors } from './canvas/render'
 const { colors: c, ansi } = parse(scheme) as unknown as {
   colors: Record<string,string>, ansi: { colors: string[] }
 }
+export const theme = writable({cursor:c.cursor,selection_background:c.selection_bg,selection_foreground:c.selection_fg,font_family:'IosevkaTerm Nerd Font Mono',font_size:13,padding:5,background:c.bg,foreground:c.fg,background_opacity:1,palette:ansi.colors,active_border:c.accent,inactive_border:c.border,cursor_text:c.selection_fg,cursor_shape:'block'})
+export const monoStack=(t:any)=>`"${t.font_family}", ui-monospace, monospace`
 export const terminalTheme = {background:c.bg, foreground:c.fg, cursor:c.cursor,
   selectionBackground:c.selection_bg, selectionForeground:c.selection_fg,
   ...Object.fromEntries(['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'].map((key,i)=>[key,ansi.colors[i]]))}

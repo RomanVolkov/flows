@@ -45,7 +45,7 @@
 
 {#if today}
   <div class="spend">
-    <button class="quiet" onclick={() => (open = !open)} title="Token usage">
+    <button class="quiet" onclick={() => (open = !open)} title="Tokens claude and codex used">
       <span class="label">today</span> {tokens(total(today.usage))}
     </button>
     {#if open}

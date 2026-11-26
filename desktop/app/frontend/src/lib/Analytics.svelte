@@ -17,6 +17,7 @@
   let table = $state(false)
   let data = $state<Day[] | undefined>()
   let hue = $state(new Map<string, string>())
+  let harnesses = $state<Record<string, number>>({})
   let error = $state<string | undefined>()
   let w = $state(800)
   let hover = $state<number | undefined>()
@@ -28,7 +29,7 @@
   }
 
   onMount(() => {
-    fetchTotals('', '').then((t) => (hue = colors((t as Totals).models)), () => {})
+    fetchTotals('', '').then((t) => { const totals = t as Totals; hue = colors(totals.models); harnesses = totals.harnesses ?? {} }, () => {})
   })
 
   $effect(() => {
@@ -111,7 +112,9 @@
     {:else if lines.length === 0}
       <p class="muted mono">no claude or codex tokens in this period</p>
     {:else}
-      <div class="summary mono"><b>{tokens(sum)}</b> tokens · {requests} request{requests === 1 ? '' : 's'}</div>
+      <div class="summary mono"><b>{tokens(sum)}</b> tokens · {requests} requests
+        {#if Object.keys(harnesses).length}<span class="harnesses">{#each Object.entries(harnesses).sort((a, b) => b[1] - a[1]) as [name, amount]}<span>{name} {tokens(amount)}</span>{/each}</span>{/if}
+      </div>
       <ul class="legend mono">
         {#each lines as s}
           <li><span class="swatch" style:background={s.color}></span>{s.model}<span class="n">{tokens(s.total)}</span></li>
@@ -194,6 +197,7 @@
   .grow { flex: 1; }
   .summary { color: var(--text-2); font-size: 12px; }
   .summary b { font-size: 18px; font-weight: 600; color: var(--text); margin-right: 4px; }
+  .harnesses { display: flex; gap: 10px; margin-top: 4px; color: var(--text-3); font-size: 11px; }
   .legend { list-style: none; display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 10px 0 6px; font-size: 12px; color: var(--text-2); }
   .legend li { display: flex; align-items: center; gap: 6px; }
   .legend .n { color: var(--text-3); }

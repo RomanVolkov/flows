@@ -1,16 +1,16 @@
 <script lang="ts">
   import { byModel, tokens, total, type Totals } from './usage'
 
-  // What requests used together: the total, the kinds of tokens, the models.
+  // What sessions used together: the total, the kinds of tokens, the models.
   let { t }: { t: Totals } = $props()
   const models = $derived(byModel(t))
   const all = $derived(total(t.usage))
 </script>
 
-{#if t.requests === 0}
-  <p class="none mono">No recorded usage</p>
+  {#if t.requests === 0}
+  <p class="none mono">no harness usage recorded</p>
 {:else}
-  <div class="total mono"><b>{tokens(all)}</b><span>{t.requests} request{t.requests === 1 ? '' : 's'}</span></div>
+  <div class="total mono"><b>{tokens(all)}</b><span>{t.requests} requests</span></div>
   <dl class="mono">
     <dt>input</dt><dd>{tokens(t.usage.input)}</dd>
     <dt>output</dt><dd>{tokens(t.usage.output)}</dd>
@@ -27,6 +27,7 @@
       {/each}
     </ul>
   {/if}
+  {#if Object.keys(t.harnesses).length}<p class="harnesses mono">{#each Object.entries(t.harnesses).sort((a,b)=>b[1]-a[1]) as [h,n]}<span>{h}: {tokens(n)}</span>{/each}</p>{/if}
 {/if}
 
 <style>
@@ -43,4 +44,5 @@
   .n { color: var(--text-3); }
   .bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--surface); overflow: hidden; }
   .bar span { display: block; height: 100%; background: var(--accent); }
+  .harnesses{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;color:var(--text-3);font-size:11px}
 </style>

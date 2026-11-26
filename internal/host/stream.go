@@ -40,9 +40,9 @@ const (
 
 // Frame is a binary terminal protocol frame exchanged over /v1/sessions/{id}/attach.
 type Frame struct {
-	Kind    FrameKind
-	Seq     uint64
-	Payload []byte
+	Kind    FrameKind `json:"kind"`
+	Seq     uint64    `json:"seq"`
+	Payload []byte    `json:"payload"`
 }
 
 // ControlMessage is the JSON payload for FrameControl.

@@ -7,14 +7,17 @@ interface Bucket {
  cache_read_tokens:number; cache_write_tokens:number; requests:number
 }
 interface Report extends Bucket {
- by_model?:Bucket[]; reasoning_tokens:number; latest_context_tokens:number
+ by_model?:Bucket[]; by_harness?:Bucket[]; reasoning_tokens:number; latest_context_tokens:number
 }
-function filter(since:string) {
- return JSON.stringify({from:since?String(BigInt(Date.parse(since))*1000000n):'',tz:Intl.DateTimeFormat().resolvedOptions().timeZone})
+function filter(since:string,node='') {
+ const query=new URLSearchParams()
+ if(node)query.set('node_id',node)
+ return JSON.stringify({from:since?String(BigInt(Date.parse(since))*1000000n):'',tz:Intl.DateTimeFormat().resolvedOptions().timeZone,query:query.toString()})
 }
-export async function Totals(since:string,_node:string):Promise<Summary>{
- const r=await request<Report>('usage',filter(since))
+export async function Totals(since:string,node:string):Promise<Summary>{
+ const r=await request<Report>('usage',filter(since,node))
  return {requests:r.requests,models:Object.fromEntries((r.by_model??[]).map(b=>[b.key,b.known_subtotal])),
+ harnesses:Object.fromEntries((r.by_harness??[]).map(b=>[b.key,b.known_subtotal])),
  usage:{input:r.uncached_input_tokens,output:r.output_tokens,cache_read:r.cache_read_tokens,
  cache_write:r.cache_write_tokens,requests:r.requests,context:r.latest_context_tokens,reasoning:r.reasoning_tokens,transcripts:0}}
 }

@@ -1,4 +1,4 @@
-// The tokens a harness session used (the daemon reads the agent's transcripts).
+// The tokens a claude or codex session used (the daemon reads the agent's transcripts).
 export interface Usage {
   model?: string
   input: number // not read from the cache
@@ -23,11 +23,12 @@ export function tokens(n: number): string {
   return `${(n / 1e6).toFixed(n < 1e7 ? 2 : 1)}M`
 }
 
-// What requests used together (GET /v1/usage): models holds all the tokens by model.
+// What sessions used together (GET /v1/usage): models holds all the tokens by model.
 export interface Totals {
   usage: Usage
   requests: number
   models: Record<string, number>
+  harnesses: Record<string, number>
 }
 
 // The periods the totals are shown for: since is RFC 3339, '' for all time. Days begin at local
@@ -45,13 +46,14 @@ export function periods(now: Date): { label: string; since: string }[] {
 // the models, the most used first
 export const byModel = (t: Totals) => Object.entries(t.models ?? {}).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
 
-// sum adds totals up: the tokens, the requests and each model's.
+// sum adds totals up: the tokens, the sessions and each model's.
 export function sum(list: Totals[]): Totals {
-  const out: Totals = { usage: { input: 0, output: 0, cache_read: 0, cache_write: 0, requests: 0, context: 0, transcripts: 0 }, requests: 0, models: {} }
+  const out: Totals = { usage: { input: 0, output: 0, cache_read: 0, cache_write: 0, requests: 0, context: 0, transcripts: 0 }, requests: 0, models: {}, harnesses: {} }
   for (const t of list) {
     for (const k of ['input', 'output', 'cache_read', 'cache_write', 'requests', 'transcripts'] as const) out.usage[k] += t.usage[k] ?? 0
     out.requests += t.requests
     for (const [m, n] of Object.entries(t.models ?? {})) out.models[m] = (out.models[m] ?? 0) + n
+    for (const [h, n] of Object.entries(t.harnesses ?? {})) out.harnesses[h] = (out.harnesses[h] ?? 0) + n
   }
   return out
 }

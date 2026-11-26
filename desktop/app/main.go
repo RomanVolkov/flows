@@ -21,6 +21,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed all:frontend/dist
@@ -29,6 +30,7 @@ var assets embed.FS
 type App struct {
 	terminals sync.Map
 	home      paths.Home
+	ctx       context.Context
 	mu        sync.Mutex
 	file      string
 }
@@ -50,8 +52,9 @@ func (a *App) Request(action, payload string) (string, error) {
 	switch action {
 	case "usage", "daily":
 		var filter struct {
-			From string
-			TZ   string
+			From  string `json:"from"`
+			TZ    string `json:"tz"`
+			Query string `json:"query"`
 		}
 		if payload != "" {
 			if err := json.Unmarshal([]byte(payload), &filter); err != nil {
@@ -63,10 +66,19 @@ func (a *App) Request(action, payload string) (string, error) {
 			path += "/daily"
 		}
 		query := url.Values{"from": {filter.From}, "tz": {filter.TZ}}
+		parsed, _ := url.ParseQuery(filter.Query)
+		for key, values := range parsed {
+			for _, value := range values {
+				query.Add(key, value)
+			}
+		}
 		path += "?" + query.Encode()
 		payload = ""
-	case "workspace", "settings":
+	case "workspace", "settings", "harnesses", "sessions", "library":
 		path = "/v1/" + action
+	case "stopSession":
+		method, path = http.MethodPost, "/v1/sessions/"+url.PathEscape(payload)+"/stop"
+		payload = ""
 	case "saveSettings":
 		method, path = http.MethodPatch, "/v1/settings"
 	case "newSession":
@@ -95,6 +107,10 @@ func (a *App) Request(action, payload string) (string, error) {
 	err = c.JSON(ctx, method, path, payload, &out)
 	return string(out), err
 }
+func (a *App) startup(ctx context.Context) { a.ctx = ctx }
+func (a *App) Clipboard(text string) bool {
+	return a.ctx != nil && wailsruntime.ClipboardSetText(a.ctx, text) == nil
+}
 func main() {
 	home, err := paths.Resolve()
 	if err != nil {
@@ -102,7 +118,7 @@ func main() {
 	}
 	app := &App{home: home}
 	err = wails.Run(&options.App{Title: "Flows", Width: 1280, Height: 820, MinWidth: 700, MinHeight: 440,
-		AssetServer: &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened},
+		AssetServer: &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened}, OnStartup: app.startup,
 		Bind: []interface{}{app}})
 	if err != nil {
 		log.Fatal(err)

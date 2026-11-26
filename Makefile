@@ -10,7 +10,10 @@ COMMANDS := flows flowsd flows-host
 export GOTOOLCHAIN := $(addprefix go,$(GO_VERSION))
 export MACOSX_DEPLOYMENT_TARGET := $(MACOS_DEPLOYMENT_TARGET)
 
-.PHONY: build plugins desktop package install uninstall desktop-check integration test lint check doctor install-spec
+.PHONY: clean build plugins desktop package install uninstall desktop-check integration test lint check doctor install-spec
+
+clean:
+	@rm -rf "$(BIN)" build/dist "$(FRONTEND)/dist"
 
 build:
 	@mkdir -p "$(BIN)"
@@ -39,7 +42,9 @@ package-daemon: libghostty
 package:
 	@VERSION="$(VERSION)" sh build/package-macos.sh
 
-install: package
+install:
+	@$(MAKE) clean
+	@$(MAKE) package
 	@mkdir -p "$${HOME}/Applications" "$${HOME}/.local/bin"
 	@rm -rf "$${HOME}/Applications/Flows.app"
 	@cp -R build/dist/Flows.app "$${HOME}/Applications/Flows.app"

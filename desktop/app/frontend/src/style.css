@@ -1,4 +1,25 @@
-:root {--radius:8px;--fast:.15s;--sans:"Instrument Sans",-apple-system,sans-serif;color-scheme:dark}
+/* Carson's flat surfaces, 1px borders, compact mono labels, and Catppuccin palette. */
+:root {
+  --bg: rgba(17, 17, 27, 1);
+  --bg-solid: #11111b;
+  --elevated: #16161f;
+  --surface: #1a1a24;
+  --hover: #20202b;
+  --border: #2c2c38;
+  --border-subtle: #1f1f2a;
+  --text: #cdd6f4;
+  --text-2: #bac2de;
+  --text-3: #585b70;
+  --accent: #cba6f7;
+  --accent-ink: #1e1e2e;
+  --accent-glow: rgba(203, 166, 247, 0.12);
+  --danger: #f38ba8;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --sans: "Instrument Sans", -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --radius: 8px;
+  --fast: 0.15s;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html, body, #app { height: 100%; width: 100%; overflow: hidden; overscroll-behavior: none; }
@@ -66,37 +87,24 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
-.app{height:100%;display:flex;flex-direction:column}
-header,nav{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.top{--wails-draggable:drag;padding:8px 12px 0 84px}
-.top strong{font:600 13px var(--mono);color:var(--accent);letter-spacing:.12em;text-transform:uppercase}
-nav,button{--wails-draggable:no-drag}
-main{display:flex;flex:1;min-height:0;gap:8px;padding:8px}
-.canvas,aside,dialog{border:1px solid var(--border-subtle);border-radius:var(--radius)}
-.canvas{position:relative;min-width:0;flex:1;overflow:hidden}
-.empty{position:absolute;inset:0;display:grid;align-content:center;justify-items:center;gap:14px}
-h1,h2{font-size:19px;font-weight:550;letter-spacing:-.025em}
-h3{margin:24px 0 8px;font:600 11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--text-3)}
-aside,dialog{background:var(--elevated);padding:18px;overflow:auto}
-aside{width:min(40%,440px);overflow-wrap:anywhere}
-aside header{margin-bottom:4px}
-dl{display:grid;grid-template-columns:auto 1fr;gap:10px 18px;margin:18px 0;font:12px var(--mono)}
-dt,footer,aside p{color:var(--text-3)}
-dd{text-align:right;user-select:text}
-.row{display:flex;width:100%;justify-content:space-between;margin:4px 0;padding:5px 8px;font:12px var(--mono)}
-footer,.notice{font:11px var(--mono);padding:0 12px 8px}
-.notice{color:var(--accent);padding-top:8px}
-dialog{margin:auto;width:min(420px,90vw);color:var(--text)}
-dialog::backdrop{background:color-mix(in srgb,var(--bg) 65%,transparent);backdrop-filter:blur(4px)}
-form,label{display:grid;gap:6px}
-form{gap:14px;margin-top:20px}
-form label{font:12px var(--mono);color:var(--text-2)}
-form button{justify-self:end}
-[role=alert]{color:var(--danger);margin:12px 0}
-.top{padding:8px 8px 0 82px;height:38px}
-.top small{opacity:.65;font-size:11px}
-aside{padding:14px;font-size:13px}
-aside h2{font:600 15px var(--sans)}
-aside h3{margin:18px 0 6px}
-aside dl{grid-template-columns:3.5rem 1fr;gap:4px 10px;margin:14px 0;align-items:baseline}
-aside dd{text-align:left;color:var(--text-2)}
+
+.app { height: 100%; min-width: 0; display: flex; flex-direction: column; }
+.top {
+  height: 42px; flex: none; display: flex; align-items: center; gap: 12px;
+  padding: 6px 12px 0 82px; --wails-draggable: drag;
+}
+.top > * { --wails-draggable: no-drag; }
+.brand { color: var(--accent); font-size: 13px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.grow { flex: 1; }
+.main { min-height: 0; flex: 1; display: flex; align-items: stretch; }
+.canvas {
+  position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden;
+  margin: 8px; background: var(--bg); border: 1px solid var(--border-subtle); border-radius: var(--radius);
+}
+.empty { position: absolute; inset: 0; display: grid; align-content: center; justify-items: center; gap: 14px; pointer-events: none; }
+.empty h1 { font-size: 19px; font-weight: 550; letter-spacing: -.025em; }
+.empty button { pointer-events: auto; }
+footer { flex: none; height: 25px; padding: 0 12px 7px; color: var(--text-3); font: 11px var(--mono); }
+.banner { flex: none; padding: 5px 12px; color: var(--warn); background: var(--elevated); font: 11px var(--mono); }
+dialog { margin: auto; width: min(560px, 92vw); padding: 18px; color: var(--text); background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius); }
+dialog::backdrop { background: color-mix(in srgb, var(--bg-solid) 65%, transparent); backdrop-filter: blur(5px); }

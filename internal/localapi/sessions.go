@@ -25,6 +25,8 @@ type SessionSummary struct {
 	LeaseStatus host.LeaseStatus     `json:"lease_status"`
 	Host        host.ProcessIdentity `json:"host"`
 	Child       host.ProcessIdentity `json:"child"`
+	Command     string               `json:"command"`
+	WorkDir     string               `json:"work_dir"`
 }
 
 // SessionManager tracks adopted hosts, checkout leases, and stop acknowledgements.
@@ -112,6 +114,8 @@ func (m *SessionManager) List() []SessionSummary {
 			LeaseStatus: lease,
 			Host:        rec.Host,
 			Child:       rec.Child,
+			Command:     rec.Command,
+			WorkDir:     rec.WorkDir,
 		})
 	}
 	return out

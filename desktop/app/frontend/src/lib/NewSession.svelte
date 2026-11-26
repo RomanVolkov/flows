@@ -5,13 +5,15 @@
  let scenario=$state('session'), agent=$state('claude'), repo=$state(''), message=$state('')
  let error=$state(''), busy=$state(false), ready=$state(false), history=$state<string[]>([])
  let review=$state<{id:string;version:string;kind:string;status:string}>()
+ let harnesses=$state<{id:string;version:string}[]>([])
  function show(dialog:HTMLDialogElement){dialog.showModal()}
  let folder:HTMLInputElement
  const id=crypto.randomUUID()
  onMount(async()=>{
   try {
    try {history=JSON.parse(localStorage.getItem('flows.repos')??'[]')}catch{history=[]}
-   const config=await request<{default_harness:string;default_directory?:string}>('settings')
+   const [config,detected]=await Promise.all([request<{default_harness:string;default_directory?:string}>('settings'),request<{id:string;version:string}[]>('harnesses')])
+   harnesses=detected
    agent=config.default_harness;repo=config.default_directory??''
    ready=true;await tick();folder?.focus()
   }catch(e){error=String(e)}
@@ -46,7 +48,7 @@
   {#if scenario==='session'}
    <p class="hint">{repo.trim()?'Works in this folder.':'A plain chat, in an empty folder of its own.'}</p>
    <label for="agent">Agent</label>
-   <select id="agent" bind:value={agent}>{#each ['claude','codex','agy'] as harness}<option value={harness}>{harness}</option>{/each}</select>
+   <select id="agent" bind:value={agent}>{#each harnesses as harness}<option value={harness.id}>{harness.id}</option>{/each}</select>
    <label for="prompt">First message</label>
    <textarea id="prompt" rows="5" bind:value={message} placeholder="optional"></textarea>
   {:else if review}<p class="hint">{review.kind} · {review.id} · {review.version} · {review.status}</p>{/if}
