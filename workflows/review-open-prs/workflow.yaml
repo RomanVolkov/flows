@@ -1,0 +1,61 @@
+schema: flows/v1
+id: review-open-prs
+version: 1.0.0
+inputs:
+  repository:
+    type: string
+    required: true
+  use_github:
+    type: boolean
+    default: true
+  use_gitlab:
+    type: boolean
+    default: false
+  provider:
+    type: string
+    default: github
+  reviewer_harness:
+    type: string
+    default: claude
+  dedupe_by_head:
+    type: boolean
+    default: true
+nodes:
+  discover_github:
+    uses: github.list-pull-requests
+    when: ${{ inputs.use_github }}
+    with:
+      repository: ${{ inputs.repository }}
+      state: open
+  discover_gitlab:
+    uses: gitlab.list-merge-requests
+    when: ${{ inputs.use_gitlab }}
+    with:
+      project: ${{ inputs.repository }}
+      state: opened
+  review_pr:
+    uses: core.harness
+    needs: [discover_github, discover_gitlab]
+    for_each:
+      items: ${{ nodes.discover_github.outputs.pull_requests }}
+      key: ${{ inputs.repository }}:${{ item.number }}:${{ item.head_sha }}
+    with:
+      harness: ${{ inputs.reviewer_harness }}
+      prompt_template: ./prompts/review.md
+      arguments:
+        repository: ${{ inputs.repository }}
+        provider: ${{ inputs.provider }}
+        pr_number: ${{ item.number }}
+        head_sha: ${{ item.head_sha }}
+        title: ${{ item.title }}
+    outputs:
+      findings_count: {type: integer, required: true}
+      summary: {type: string, required: true}
+  notify_findings:
+    uses: core.notify
+    needs: [review_pr]
+    with:
+      title: PR/MR Review Complete
+      body: Completed review for ${{ inputs.repository }}
+outputs:
+  reviews: ${{ nodes.review_pr.outputs }}
