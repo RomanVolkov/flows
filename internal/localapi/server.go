@@ -56,7 +56,7 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	defer stop()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
-		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs),
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs, home),
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -116,13 +116,13 @@ func listen(path string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager) http.Handler {
+func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager, home paths.Home) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && !strings.HasPrefix(r.URL.Path, "/v1/library/") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -160,9 +160,15 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			}
 		case "/v1/runs":
 			handleRuns(w, r, runs)
+		case "/v1/library":
+			handleLibrary(w, r, home, nil)
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/v1/library/") {
+				handleLibrary(w, r, home, nil)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/v1/sessions/") {
 				handleSessions(w, r, sessions)
 				return
