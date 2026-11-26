@@ -4,7 +4,7 @@ GO ?= go
 VERSION ?= dev
 BIN := build/bin
 TOOLS := build/tools
-STATICCHECK := $(abspath $(TOOLS)/$(STATICCHECK_VERSION)/staticcheck)
+STATICCHECK := $(abspath $(TOOLS)/go$(GO_VERSION)/$(STATICCHECK_VERSION)/staticcheck)
 MODULES := . sdk/go
 COMMANDS := flows flowsd flows-host
 export GOTOOLCHAIN := $(addprefix go,$(GO_VERSION))
@@ -23,7 +23,7 @@ test:
 		(cd "$$module" && $(GO) test ./...); \
 	done
 
-$(STATICCHECK): build/toolchain.lock
+$(STATICCHECK):
 	GOBIN="$(dir $(STATICCHECK))" $(GO) install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
 
 lint: $(STATICCHECK)
@@ -35,3 +35,5 @@ check: test lint
 
 doctor:
 	@sh scripts/doctor.sh "$(GO)" "$(STATICCHECK)"
+
+include build/macos.mk

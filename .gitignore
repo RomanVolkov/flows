@@ -1,3 +1,4 @@
 /.deps/
 /build/*
 !/build/toolchain.lock
+!/build/macos.mk
