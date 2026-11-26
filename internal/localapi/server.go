@@ -1,0 +1,157 @@
+package localapi
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/romanvolkov/flows/internal/paths"
+)
+
+func Run(ctx context.Context, home paths.Home, build string) error {
+	if err := home.InitRuntime(); err != nil {
+		return err
+	}
+	lock, err := TryLock(filepath.Join(home.Runtime, "daemon.lock"))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := home.Init(); err != nil {
+		return err
+	}
+
+	listener, err := listen(home.Socket())
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	server := &http.Server{
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop),
+		ReadHeaderTimeout: 3 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	drained := make(chan error, 1)
+	go func() {
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		err := server.Shutdown(shutdown)
+		if err != nil {
+			server.Close()
+		}
+		drained <- err
+	}()
+
+	err = server.Serve(listener)
+	stop()
+	shutdownErr := <-drained
+	if errors.Is(err, http.ErrServerClosed) {
+		return shutdownErr
+	}
+	return errors.Join(err, shutdownErr)
+}
+
+func listen(path string) (*net.UnixListener, error) {
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("service socket path is occupied: %s", path)
+		}
+		old, dialErr := net.DialTimeout("unix", path, 350*time.Millisecond)
+		if dialErr == nil {
+			old.Close()
+			return nil, fmt.Errorf("a listener already occupies %s", path)
+		}
+		if !errors.Is(dialErr, syscall.ECONNREFUSED) {
+			return nil, fmt.Errorf("inspect stale socket: %w", dialErr)
+		}
+		if err := os.Remove(path); err != nil {
+			return nil, fmt.Errorf("remove stale socket: %w", err)
+		}
+	case !errors.Is(err, os.ErrNotExist):
+		return nil, err
+	}
+
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		listener.Close()
+		return nil, err
+	}
+	return listener, nil
+}
+
+func handler(version Version, shutdown context.CancelFunc) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > MaxBodyBytes {
+			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
+			return
+		}
+		if r.ContentLength != 0 {
+			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+			n, err := io.Copy(io.Discard, body)
+			var tooLarge *http.MaxBytesError
+			switch {
+			case errors.As(err, &tooLarge):
+				writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
+				return
+			case err != nil || n != 0:
+				writeError(w, http.StatusBadRequest, "invalid_body", "this endpoint expects an empty request body")
+				return
+			}
+		}
+
+		switch r.URL.Path {
+		case "/v1/version":
+			if method(w, r, http.MethodGet) {
+				writeJSON(w, http.StatusOK, version)
+			}
+		case "/v1/health":
+			if method(w, r, http.MethodGet) {
+				writeJSON(w, http.StatusOK, Health{Status: "ready"})
+			}
+		case "/v1/shutdown":
+			if method(w, r, http.MethodPost) {
+				writeJSON(w, http.StatusOK, Health{Status: "stopping"})
+				shutdown()
+			}
+		default:
+			writeError(w, http.StatusNotFound, "not_found", "unknown service endpoint")
+		}
+	})
+}
+
+func method(w http.ResponseWriter, r *http.Request, allowed string) bool {
+	if r.Method == allowed {
+		return true
+	}
+	w.Header().Set("Allow", allowed)
+	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "unsupported request method")
+	return false
+}
+
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeJSON(w, status, Error{Code: code, Message: message})
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(data)
+}

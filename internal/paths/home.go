@@ -82,6 +82,18 @@ func (h Home) Tools() string     { return filepath.Join(h.Config, "tools") }
 func (h Home) Spec() string      { return filepath.Join(h.Config, "spec") }
 func (h Home) Settings() string  { return filepath.Join(h.Config, "settings.yaml") }
 
+func (h Home) Socket() string { return filepath.Join(h.Runtime, "flowsd.sock") }
+
+func (h Home) InitRuntime() error { return privateDir(h.Runtime) }
+
+func (h Home) ServiceLabel() string {
+	const base = "dev.flows.daemon"
+	if h.override == "" {
+		return base
+	}
+	return base + "." + filepath.Base(h.Runtime)
+}
+
 func (h Home) Init() error {
 	dirs := []string{h.Config, h.State, h.Cache, h.Logs, h.Runtime, h.Workflows(), h.Tools(), h.Spec()}
 	if h.override != "" {
