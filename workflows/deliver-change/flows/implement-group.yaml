@@ -1,0 +1,99 @@
+schema: flows/v1
+id: implement-group
+version: 1.0.0
+inputs:
+  group_id:
+    type: string
+    required: true
+  repository:
+    type: string
+    required: true
+  base_branch:
+    type: string
+    default: main
+  branch:
+    type: string
+    required: true
+  plan_path:
+    type: string
+    required: true
+  verify_command:
+    type: string
+    default: make check
+  harness:
+    type: string
+    default: claude
+  reviewer_harness:
+    type: string
+    default: codex
+  chat_channel:
+    type: string
+    default: engineering
+  ticket_id:
+    type: string
+    required: true
+nodes:
+  prepare_checkout:
+    uses: git.prepare-checkout
+    with:
+      repo_path: ${{ inputs.repository }}
+      branch: ${{ inputs.branch }}
+      base_ref: ${{ inputs.base_branch }}
+  implement:
+    uses: core.harness
+    needs: [prepare_checkout]
+    with:
+      harness: ${{ inputs.harness }}
+      prompt_template: ../prompts/implement.md
+      arguments:
+        group_id: ${{ inputs.group_id }}
+        plan_path: ${{ inputs.plan_path }}
+        checkout_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+  review_code:
+    uses: core.harness
+    needs: [implement]
+    with:
+      harness: ${{ inputs.reviewer_harness }}
+      prompt_template: ../prompts/review-code.md
+      arguments:
+        group_id: ${{ inputs.group_id }}
+        checkout_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+    outputs:
+      approved: {type: boolean, required: true}
+  verify:
+    uses: core.command
+    needs: [review_code]
+    with:
+      command: /bin/sh
+      args: ["-c", "${{ inputs.verify_command }}"]
+      cwd: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+  push_branch:
+    uses: git.push-branch
+    needs: [verify]
+    with:
+      repo_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+      branch: ${{ inputs.branch }}
+  open_or_reuse_pr:
+    uses: github.open-or-reuse-pr
+    needs: [push_branch]
+    with:
+      repository: ${{ inputs.repository }}
+      head: ${{ inputs.branch }}
+      base: ${{ inputs.base_branch }}
+      title: Deliver ${{ inputs.group_id }}
+      body: Implements ${{ inputs.plan_path }}
+  transition_ticket:
+    uses: jira.transition-issue
+    needs: [open_or_reuse_pr]
+    with:
+      key: ${{ inputs.ticket_id }}
+      target_status: In Review
+  request_review_chat:
+    uses: zulip.open-or-reuse-topic
+    needs: [open_or_reuse_pr]
+    with:
+      channel: ${{ inputs.chat_channel }}
+      topic: ${{ inputs.group_id }}
+      content: Review requested for ${{ inputs.group_id }}
+outputs:
+  pr_url: ${{ nodes.open_or_reuse_pr.outputs.url }}
