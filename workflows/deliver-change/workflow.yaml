@@ -1,0 +1,62 @@
+schema: flows/v1
+id: deliver-change
+version: 1.0.0
+inputs:
+  request:
+    type: string
+    required: true
+  repositories:
+    type: array
+    required: true
+  tracker_provider:
+    type: string
+    default: jira
+  code_host:
+    type: string
+    default: github
+  chat_channel:
+    type: string
+    default: engineering
+  auto_approve:
+    type: boolean
+    default: false
+nodes:
+  group_work:
+    uses: core.harness
+    with:
+      harness: claude
+      prompt_template: ./prompts/group.md
+      arguments:
+        request: ${{ inputs.request }}
+        repositories: ${{ inputs.repositories }}
+    outputs:
+      groups: {type: array, required: true}
+  approve_groups:
+    uses: core.notify
+    needs: [group_work]
+    with:
+      title: Approve Task Groups
+      body: Review proposed task groups for ${{ inputs.request }}
+  plan_group:
+    workflow: ./flows/plan-group.yaml
+    needs: [approve_groups]
+    for_each:
+      items: ${{ nodes.group_work.outputs.groups }}
+      key: ${{ item.id }}
+    with:
+      group_id: ${{ item.id }}
+      goal: ${{ item.goal }}
+      repository: ${{ item.repository }}
+  reconcile_plans:
+    uses: core.harness
+    needs: [plan_group]
+    with:
+      harness: claude
+      prompt_template: ./prompts/reconcile-plans.md
+      arguments:
+        request: ${{ inputs.request }}
+    outputs:
+      approved: {type: boolean, required: true}
+outputs:
+  groups: ${{ nodes.group_work.outputs.groups }}
+  reconciled: ${{ nodes.reconcile_plans.outputs.approved }}

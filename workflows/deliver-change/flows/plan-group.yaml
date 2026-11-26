@@ -1,0 +1,43 @@
+schema: flows/v1
+id: plan-group
+version: 1.0.0
+inputs:
+  group_id:
+    type: string
+    required: true
+  goal:
+    type: string
+    required: true
+  repository:
+    type: string
+    required: true
+  max_review_rounds:
+    type: integer
+    default: 3
+nodes:
+  draft_plan:
+    uses: core.harness
+    with:
+      harness: claude
+      prompt_template: ../prompts/plan.md
+      arguments:
+        group_id: ${{ inputs.group_id }}
+        goal: ${{ inputs.goal }}
+        repository: ${{ inputs.repository }}
+    outputs:
+      plan_path: {type: string, required: true}
+  review_plan:
+    uses: core.harness
+    needs: [draft_plan]
+    with:
+      harness: codex
+      prompt_template: ../prompts/review-plan.md
+      arguments:
+        group_id: ${{ inputs.group_id }}
+        plan_path: ${{ nodes.draft_plan.outputs.plan_path }}
+    outputs:
+      approved: {type: boolean, required: true}
+      issues_count: {type: integer, required: true}
+outputs:
+  plan_path: ${{ nodes.draft_plan.outputs.plan_path }}
+  approved: ${{ nodes.review_plan.outputs.approved }}
