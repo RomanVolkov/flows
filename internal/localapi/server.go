@@ -41,6 +41,11 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	if _, err := sessions.Reconcile(ctx); err != nil {
 		return fmt.Errorf("reconcile sessions: %w", err)
 	}
+	runs := NewRunManager(home, state, sessions)
+	if err := runs.ReconcileIntents(ctx); err != nil {
+		return fmt.Errorf("reconcile launch intents: %w", err)
+	}
+	defer runs.CloseHosts()
 
 	listener, err := listen(home.Socket())
 	if err != nil {
@@ -51,7 +56,7 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	defer stop()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
-		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions),
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs),
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -111,13 +116,13 @@ func listen(path string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager) http.Handler {
+func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -153,6 +158,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 				writeJSON(w, http.StatusOK, Health{Status: "stopping"})
 				shutdown()
 			}
+		case "/v1/runs":
+			handleRuns(w, r, runs)
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
