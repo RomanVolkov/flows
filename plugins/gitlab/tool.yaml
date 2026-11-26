@@ -1,0 +1,35 @@
+schema: flows/tool/v1
+id: gitlab
+version: 1.0.0
+owner: flows
+description: GitLab MR, pipeline, approval, discussion, and merge operations via glab
+credentials:
+  - id: gitlab-cli
+    provider: gitlab
+    required: true
+operations:
+  - id: gitlab.list-merge-requests
+    description: List merge requests with pagination
+    execution_kind: plugin
+    read_only: true
+    output_schema:
+      type: object
+      properties:
+        pull_requests: {type: array}
+        merge_requests: {type: array}
+  - id: gitlab.get-merge-request
+    description: Inspect MR diff, refs, pipeline status, approvals, and discussions
+    execution_kind: plugin
+    read_only: true
+  - id: gitlab.open-or-reuse-mr
+    description: Open a merge request or reuse an existing one for the source branch
+    execution_kind: plugin
+  - id: gitlab.reply-discussion
+    description: Reply to an MR discussion thread
+    execution_kind: plugin
+  - id: gitlab.request-review
+    description: Assign reviewers on an MR
+    execution_kind: plugin
+  - id: gitlab.merge-mr
+    description: Merge an MR pinned to expected head SHA and merge readiness
+    execution_kind: plugin
