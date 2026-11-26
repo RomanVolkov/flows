@@ -66,24 +66,33 @@ func (c *Client) Shutdown(ctx context.Context) error {
 }
 
 func (c *Client) request(ctx context.Context, method, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, method, "http://flows.local"+path, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(ctx, method, path)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	decoder := json.NewDecoder(io.LimitReader(resp.Body, localapi.MaxBodyBytes))
-	if resp.StatusCode != http.StatusOK {
-		apiErr := new(localapi.Error)
-		if err := decoder.Decode(apiErr); err != nil || apiErr.Code == "" {
-			return fmt.Errorf("service returned HTTP %d", resp.StatusCode)
-		}
-		return apiErr
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (c *Client) send(ctx context.Context, method, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, "http://flows.local"+path, nil)
+	if err != nil {
+		return nil, err
 	}
-	return decoder.Decode(out)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, nil
+	}
+	defer resp.Body.Close()
+	apiErr := new(localapi.Error)
+	decoder := json.NewDecoder(io.LimitReader(resp.Body, localapi.MaxBodyBytes))
+	if err := decoder.Decode(apiErr); err != nil || apiErr.Code == "" {
+		return nil, fmt.Errorf("service returned HTTP %d", resp.StatusCode)
+	}
+	return nil, apiErr
 }
 
 type Starter func(context.Context, paths.Home) error

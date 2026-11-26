@@ -44,7 +44,8 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	server := &http.Server{
-		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop),
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state),
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -104,7 +105,7 @@ func listen(path string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func handler(version Version, shutdown context.CancelFunc) http.Handler {
+func handler(version Version, shutdown context.CancelFunc, state *store.Store) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
@@ -125,6 +126,14 @@ func handler(version Version, shutdown context.CancelFunc) http.Handler {
 		}
 
 		switch r.URL.Path {
+		case "/v1/workspace":
+			if method(w, r, http.MethodGet) {
+				workspace(w, r, state)
+			}
+		case "/v1/events":
+			if method(w, r, http.MethodGet) {
+				events(w, r, state)
+			}
 		case "/v1/version":
 			if method(w, r, http.MethodGet) {
 				writeJSON(w, http.StatusOK, version)
