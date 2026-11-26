@@ -6,6 +6,8 @@ import (
 	"os"
 	"time"
 
+	"github.com/romanvolkov/flows/internal/catalog"
+	"github.com/romanvolkov/flows/internal/cli"
 	"github.com/romanvolkov/flows/internal/client"
 	"github.com/romanvolkov/flows/internal/command"
 	"github.com/romanvolkov/flows/internal/paths"
@@ -17,6 +19,9 @@ func main() {
 
 func run() int {
 	args := os.Args[1:]
+	if len(args) >= 2 && args[0] == "validate" {
+		return runValidate(args[1:])
+	}
 	if len(args) == 1 {
 		switch args[0] {
 		case "status", "shutdown":
@@ -26,11 +31,44 @@ func run() int {
 			}
 			return 0
 		case "--help", "-h":
-			fmt.Fprintln(os.Stdout, "Usage: flows {version|status|shutdown}")
+			fmt.Fprintln(os.Stdout, "Usage: flows {version|status|shutdown|validate DIRECTORY [--json]}")
 			return 0
 		}
 	}
 	return command.Run("flows", args, os.Stdout, os.Stderr)
+}
+
+func runValidate(args []string) int {
+	dir := ""
+	jsonOut := false
+	for _, a := range args {
+		if a == "--json" {
+			jsonOut = true
+		} else if dir == "" {
+			dir = a
+		}
+	}
+	if dir == "" {
+		fmt.Fprintln(os.Stderr, "Usage: flows validate DIRECTORY [--json]")
+		return 2
+	}
+	reg := catalog.NewRegistry()
+	_ = reg.RegisterBuiltins()
+	rep := cli.ValidateDirectory(dir, reg)
+	if jsonOut {
+		raw, _ := cli.FormatValidateJSON(rep)
+		fmt.Fprintln(os.Stdout, string(raw))
+	} else if rep.Valid {
+		fmt.Fprintf(os.Stdout, "valid: %s\n", rep.WorkflowID)
+	} else {
+		for _, d := range rep.Diagnostics {
+			fmt.Fprintln(os.Stderr, d.Error())
+		}
+	}
+	if rep.Valid {
+		return 0
+	}
+	return 1
 }
 
 func service(action string) error {
