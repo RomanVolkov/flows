@@ -43,8 +43,11 @@ cp schema/tool-v1.json "${CONTENTS}/Resources/spec/v1/tool.schema.json"
 
 # Sign with configured Developer ID or ad-hoc for local development.
 if command -v codesign >/dev/null 2>&1; then
-  SIGN_ID="${FLOWS_CODESIGN_IDENTITY:--}"
-  codesign --force --deep --sign "${SIGN_ID}" "${APP_DIR}" >/dev/null 2>&1 || true
+  if [ -n "${FLOWS_CODESIGN_IDENTITY:-}" ]; then
+    codesign --force --deep --sign "${FLOWS_CODESIGN_IDENTITY}" "${APP_DIR}"
+  else
+    codesign --force --deep --sign - "${APP_DIR}" >/dev/null 2>&1 || true
+  fi
 fi
 
 ARCHIVE="${OUT_DIR}/Flows-${VERSION}-darwin-${ARCH}.tar.gz"

@@ -114,8 +114,28 @@ exit 0
 	if err != nil {
 		t.Fatalf("open-or-reuse-mr: %v", err)
 	}
-	if !strings.Contains(string(reuseRes.Output), `"reused":true`) {
-		t.Fatalf("expected reused=true, got %s", reuseRes.Output)
+	if !strings.Contains(string(reuseRes.Output), `"reused":true`) || !strings.Contains(string(reuseRes.Output), `"url":"https://gl/11"`) {
+		t.Fatalf("expected reused=true and url, got %s", reuseRes.Output)
+	}
+
+	// get-merge-request, reply-discussion, and request-review.
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "gitlab.get-merge-request",
+		Input: map[string]any{"project": "group/repo", "iid": 12},
+	}); err != nil {
+		t.Fatalf("get-merge-request: %v", err)
+	}
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "gitlab.reply-discussion",
+		Input: map[string]any{"project": "group/repo", "iid": 12, "body": "fixed"},
+	}); err != nil {
+		t.Fatalf("reply-discussion: %v", err)
+	}
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "gitlab.request-review",
+		Input: map[string]any{"project": "group/repo", "iid": 12, "reviewers": []string{"bob"}},
+	}); err != nil {
+		t.Fatalf("request-review: %v", err)
 	}
 
 	// Unresolved blocking discussions prevent merge.

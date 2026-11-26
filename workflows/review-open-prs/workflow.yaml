@@ -33,9 +33,10 @@ nodes:
     with:
       project: ${{ inputs.repository }}
       state: opened
-  review_pr:
+  review_github_pr:
     uses: core.harness
-    needs: [discover_github, discover_gitlab]
+    needs: [discover_github]
+    when: ${{ inputs.use_github }}
     for_each:
       items: ${{ nodes.discover_github.outputs.pull_requests }}
       key: ${{ inputs.repository }}:${{ item.number }}:${{ item.head_sha }}
@@ -44,7 +45,26 @@ nodes:
       prompt_template: ./prompts/review.md
       arguments:
         repository: ${{ inputs.repository }}
-        provider: ${{ inputs.provider }}
+        provider: github
+        pr_number: ${{ item.number }}
+        head_sha: ${{ item.head_sha }}
+        title: ${{ item.title }}
+    outputs:
+      findings_count: {type: integer, required: true}
+      summary: {type: string, required: true}
+  review_gitlab_mr:
+    uses: core.harness
+    needs: [discover_gitlab]
+    when: ${{ inputs.use_gitlab }}
+    for_each:
+      items: ${{ nodes.discover_gitlab.outputs.merge_requests }}
+      key: ${{ inputs.repository }}:${{ item.number }}:${{ item.head_sha }}
+    with:
+      harness: ${{ inputs.reviewer_harness }}
+      prompt_template: ./prompts/review.md
+      arguments:
+        repository: ${{ inputs.repository }}
+        provider: gitlab
         pr_number: ${{ item.number }}
         head_sha: ${{ item.head_sha }}
         title: ${{ item.title }}
@@ -53,9 +73,10 @@ nodes:
       summary: {type: string, required: true}
   notify_findings:
     uses: core.notify
-    needs: [review_pr]
+    needs: [review_github_pr, review_gitlab_mr]
     with:
       title: PR/MR Review Complete
       body: Completed review for ${{ inputs.repository }}
 outputs:
-  reviews: ${{ nodes.review_pr.outputs }}
+  github_reviews: ${{ nodes.review_github_pr.outputs }}
+  gitlab_reviews: ${{ nodes.review_gitlab_mr.outputs }}

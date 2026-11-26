@@ -11,9 +11,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	sdk "github.com/romanvolkov/flows/sdk/go"
 )
+
+var ytHTTP = &http.Client{Timeout: 30 * time.Second}
 
 func ytClient() (baseURL, token string, err error) {
 	baseURL = strings.TrimRight(os.Getenv("FLOWS_YOUTRACK_URL"), "/")
@@ -40,7 +43,7 @@ func doYT(ctx context.Context, method, path string, body any) ([]byte, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := ytHTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -101,8 +104,11 @@ func main() {
 					return map[string]any{"native_id": "yt:" + issue.ID, "id": in.ID, "state": f.Value.Name, "already_transitioned": true}, nil
 				}
 			}
+			if strings.ContainsAny(in.TargetState, "{}\n\r;") || strings.TrimSpace(in.TargetState) == "" {
+				return nil, errors.New("invalid target_state")
+			}
 			_, err = doYT(ctx, http.MethodPost, "/api/commands", map[string]any{
-				"query":  "State " + in.TargetState,
+				"query":  fmt.Sprintf("State {%s}", in.TargetState),
 				"issues": []map[string]string{{"idReadable": in.ID}},
 			})
 			if err != nil {

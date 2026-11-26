@@ -21,6 +21,13 @@ Local macOS desktop & CLI workflow orchestrator for AI coding harnesses (`claude
    make package install
    ```
 
+## CLI & Build Targets
+
+- `flows`: `version`, `status`, `shutdown`, `validate <workflow.yaml>`, `spec {path|show [authoring|protocol|workflow|tool]}`
+- `flowsd`: `run`, `--foreground`
+- `flows-host`: `serve`, `attach`
+- `Makefile`: `build`, `plugins`, `desktop`, `package`, `install`, `install-spec`, `uninstall`, `check`, `desktop-check`, `integration`, `doctor` (plus `build/macos.mk`: `deps`, `fonts`, `libghostty`, `terminal-probe`, `terminal-probe-check`)
+
 ## Prerequisites
 
 - **Source builds:** Go (pinned in `build/toolchain.lock`), Xcode Command Line Tools (`clang`), and `staticcheck`.

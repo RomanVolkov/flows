@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Options configures a user-scoped Flows installation.
@@ -45,22 +46,33 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 	label := DefaultLabel(opts.HomeDir, opts.IsDevHome)
 	plistPath := filepath.Join(opts.HomeDir, "Library", "LaunchAgents", label+".plist")
 
-	// 1. Stage Flows.app.
+	// 1. Check preexisting CLI link conflict before mutating anything.
+	cliTarget := filepath.Join(appDst, "Contents", "MacOS", "flows")
+	if info, err := os.Lstat(cliDst); err == nil {
+		if info.Mode()&os.ModeSymlink == 0 {
+			return Manifest{}, fmt.Errorf("step check cli link: %s already exists and is not a symlink", cliDst)
+		}
+		target, err := os.Readlink(cliDst)
+		if err != nil || !strings.HasPrefix(target, appDst) {
+			return Manifest{}, fmt.Errorf("step check cli link: %s points to %q (expected %s)", cliDst, target, cliTarget)
+		}
+	}
+
+	// 2. Stage Flows.app.
 	if err := copyDirPreserveExisting(opts.SourceBundle, appDst, true); err != nil {
 		return Manifest{}, fmt.Errorf("step stage app bundle: %w", err)
 	}
 
-	// 2. Link ~/.local/bin/flows -> Flows.app/Contents/MacOS/flows.
+	// 3. Link ~/.local/bin/flows -> Flows.app/Contents/MacOS/flows.
 	if err := os.MkdirAll(filepath.Dir(cliDst), 0755); err != nil {
 		return Manifest{}, fmt.Errorf("step create bin dir: %w", err)
 	}
-	cliTarget := filepath.Join(appDst, "Contents", "MacOS", "flows")
 	_ = os.Remove(cliDst)
 	if err := os.Symlink(cliTarget, cliDst); err != nil {
 		return Manifest{}, fmt.Errorf("step symlink cli: %w", err)
 	}
 
-	// 3. Stage spec/v1 (always refreshed) and default workflows (never overwrite user-edited files).
+	// 4. Stage spec/v1 (always refreshed) and default workflows (never overwrite user-edited files).
 	srcSpec := filepath.Join(opts.SourceBundle, "Contents", "Resources", "spec", "v1")
 	if _, err := os.Stat(srcSpec); err == nil {
 		if err := copyDirPreserveExisting(srcSpec, specDst, true); err != nil {
@@ -74,7 +86,7 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 		}
 	}
 
-	// 4. Register launchd service.
+	// 5. Register launchd service.
 	daemonBin := filepath.Join(appDst, "Contents", "MacOS", "flowsd")
 	if err := RegisterLaunchd(ctx, opts.Runner, plistPath, LaunchdConfig{
 		Label:     label,
@@ -85,7 +97,7 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("step register launchd: %w", err)
 	}
 
-	// 5. Wait for protocol-compatible health if provided.
+	// 6. Wait for protocol-compatible health if provided.
 	if opts.HealthCheck != nil {
 		if err := opts.HealthCheck(ctx); err != nil {
 			return Manifest{}, fmt.Errorf("step daemon health check: %w", err)
@@ -101,10 +113,15 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 		OwnedFiles: []string{appDst, cliDst, plistPath, specDst},
 	}
 	manifestPath := filepath.Join(configDir, "install-manifest.json")
-	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err == nil {
-		if raw, err := json.MarshalIndent(m, "", "  "); err == nil {
-			_ = os.WriteFile(manifestPath, raw, 0644)
-		}
+	if err := os.MkdirAll(filepath.Dir(manifestPath), 0755); err != nil {
+		return Manifest{}, fmt.Errorf("step create manifest dir: %w", err)
+	}
+	raw, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return Manifest{}, fmt.Errorf("step marshal manifest: %w", err)
+	}
+	if err := os.WriteFile(manifestPath, raw, 0644); err != nil {
+		return Manifest{}, fmt.Errorf("step write manifest: %w", err)
 	}
 	return m, nil
 }
@@ -122,6 +139,14 @@ func copyDirPreserveExisting(src, dst string, overwrite bool) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0755)
 		}
+		if d.Type()&os.ModeSymlink != 0 {
+			linkTarget, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			_ = os.Remove(target)
+			return os.Symlink(linkTarget, target)
+		}
 		if !overwrite {
 			if _, err := os.Stat(target); err == nil {
 				return nil // preserve user-edited file
@@ -131,17 +156,23 @@ func copyDirPreserveExisting(src, dst string, overwrite bool) error {
 		if err != nil {
 			return err
 		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode())
-		if err != nil {
-			return err
-		}
-		defer out.Close()
-		_, err = io.Copy(out, in)
-		return err
+		return copyFileAtomic(path, target, info.Mode())
 	})
+}
+
+func copyFileAtomic(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
 }

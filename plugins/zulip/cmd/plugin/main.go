@@ -10,9 +10,12 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	sdk "github.com/romanvolkov/flows/sdk/go"
 )
+
+var zulipHTTP = &http.Client{Timeout: 30 * time.Second}
 
 func zulipClient() (baseURL, email, apiKey string, err error) {
 	baseURL = strings.TrimRight(os.Getenv("FLOWS_ZULIP_URL"), "/")
@@ -43,7 +46,7 @@ func doZulip(ctx context.Context, method, path string, form url.Values) ([]byte,
 	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := zulipHTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}

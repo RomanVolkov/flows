@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -50,13 +51,23 @@ func runGH(ctx context.Context, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+func validateRepo(repo string) error {
+	if strings.Count(repo, "/") != 1 || strings.ContainsAny(repo, "?#&\\ ") || strings.Contains(repo, "..") {
+		return fmt.Errorf("invalid github repository %q", repo)
+	}
+	return nil
+}
+
 func listPRs(ctx context.Context, repo, state string) ([]PullRequest, error) {
+	if err := validateRepo(repo); err != nil {
+		return nil, err
+	}
 	if state == "" {
 		state = "open"
 	}
 	var all []PullRequest
 	for page := 1; ; page++ {
-		out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls?state=%s&per_page=100&page=%d", repo, state, page))
+		out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls?state=%s&per_page=100&page=%d", repo, url.QueryEscape(state), page))
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +128,11 @@ func main() {
 	err := sdk.Serve(m, map[string]sdk.Handler{
 		"github.list-pull-requests": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
 			var in struct{ Repository, State string }
-			_ = json.Unmarshal(ic.Input, &in)
+			if len(ic.Input) > 0 {
+				if err := json.Unmarshal(ic.Input, &in); err != nil {
+					return nil, err
+				}
+			}
 			prs, err := listPRs(ctx, in.Repository, in.State)
 			if err != nil {
 				return nil, err
@@ -129,7 +144,12 @@ func main() {
 				Repository string `json:"repository"`
 				Number     int    `json:"number"`
 			}
-			_ = json.Unmarshal(ic.Input, &in)
+			if err := json.Unmarshal(ic.Input, &in); err != nil {
+				return nil, err
+			}
+			if err := validateRepo(in.Repository); err != nil {
+				return nil, err
+			}
 			out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls/%d", in.Repository, in.Number))
 			if err != nil {
 				return nil, err
@@ -145,14 +165,16 @@ func main() {
 				Title      string `json:"title"`
 				Body       string `json:"body"`
 			}
-			_ = json.Unmarshal(ic.Input, &in)
+			if err := json.Unmarshal(ic.Input, &in); err != nil {
+				return nil, err
+			}
 			existing, err := listPRs(ctx, in.Repository, "open")
 			if err != nil {
 				return nil, err
 			}
 			for _, pr := range existing {
 				if pr.HeadRef == in.Head {
-					return map[string]any{"reused": true, "pull_request": pr}, nil
+					return map[string]any{"reused": true, "url": pr.URL, "pull_request": pr}, nil
 				}
 			}
 			out, err := runGH(ctx, "pr", "create", "--repo", in.Repository, "--head", in.Head, "--base", in.Base, "--title", in.Title, "--body", in.Body)

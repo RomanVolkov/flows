@@ -51,20 +51,32 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 	}
 	receiptsPath := filepath.Join(opts.HomeDir, ".config", "flows", "upgrade-receipts.json")
 	if len(opts.Receipts) > 0 {
-		_ = os.MkdirAll(filepath.Dir(receiptsPath), 0755)
-		if raw, err := json.Marshal(opts.Receipts); err == nil {
-			_ = os.WriteFile(receiptsPath, raw, 0600)
+		if err := os.MkdirAll(filepath.Dir(receiptsPath), 0755); err != nil {
+			return fmt.Errorf("create receipts dir: %w", err)
+		}
+		raw, err := json.Marshal(opts.Receipts)
+		if err != nil {
+			return fmt.Errorf("marshal receipts: %w", err)
+		}
+		if err := os.WriteFile(receiptsPath, raw, 0600); err != nil {
+			return fmt.Errorf("write receipts: %w", err)
 		}
 	}
 
 	// Backup store and swap bundle, keeping prevApp + storeBak until validation passes.
 	var storeBak string
 	if opts.StorePath != "" {
-		if data, err := os.ReadFile(opts.StorePath); err == nil {
+		if _, err := os.Stat(opts.StorePath); err == nil {
+			data, err := os.ReadFile(opts.StorePath)
+			if err != nil {
+				return fmt.Errorf("read store for backup: %w", err)
+			}
 			storeBak = opts.StorePath + ".bak"
 			if err := os.WriteFile(storeBak, data, 0600); err != nil {
 				return fmt.Errorf("backup store: %w", err)
 			}
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat store: %w", err)
 		}
 	}
 	if _, err := os.Stat(appDir); err == nil {
@@ -79,6 +91,9 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 			_ = os.Rename(prevApp, appDir)
 		}
 		if storeBak != "" {
+			// Remove stale WAL/SHM files before restoring the SQLite backup.
+			_ = os.Remove(opts.StorePath + "-wal")
+			_ = os.Remove(opts.StorePath + "-shm")
 			if data, err := os.ReadFile(storeBak); err == nil {
 				_ = os.WriteFile(opts.StorePath, data, 0600)
 			}
@@ -106,7 +121,8 @@ func Upgrade(ctx context.Context, opts UpgradeOptions) error {
 	for _, r := range opts.Receipts {
 		if opts.ReplayReceipt != nil {
 			if err := opts.ReplayReceipt(ctx, r); err != nil {
-				return fmt.Errorf("replay receipt %s: %w", r.ID, err)
+				rollback()
+				return fmt.Errorf("replay receipt %s (rolled back): %w", r.ID, err)
 			}
 		}
 	}

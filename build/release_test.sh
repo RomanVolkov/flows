@@ -26,4 +26,11 @@ test -f "${ARCHIVE}"
 test -f "${ARCHIVE}.sha256"
 (cd "${OUT_DIR}" && shasum -a 256 -c "$(basename "${ARCHIVE}.sha256")")
 
+# Execute packaged CLI binary, lint Info.plist, and verify plugin handshake.
+"${APP}/MacOS/flows" version | grep -q "${VERSION}"
+if command -v plutil >/dev/null 2>&1; then
+  plutil -lint "${APP}/Info.plist" >/dev/null
+fi
+printf '{"protocol":1,"kind":"describe","request_id":"d1"}\n' | "${APP}/Resources/plugins/git/git-plugin" | grep -q '"git.checkout"'
+
 echo "release_test passed"

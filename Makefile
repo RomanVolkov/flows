@@ -43,6 +43,8 @@ uninstall:
 desktop-check:
 	@$(GO) test ./desktop/...
 	@clang -fsyntax-only -fobjc-arc desktop/macos/WorkspaceView.m desktop/macos/CanvasView.m desktop/macos/CanvasGestures.m
+	@clang -fobjc-arc -framework AppKit desktop/macos/WorkspaceTests.m -o "$(BIN)/WorkspaceTests"
+	@"$(BIN)/WorkspaceTests"
 
 integration:
 	@$(GO) test ./integration/...

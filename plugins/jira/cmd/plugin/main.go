@@ -10,10 +10,15 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 
 	sdk "github.com/romanvolkov/flows/sdk/go"
 )
+
+var jiraHTTP = &http.Client{Timeout: 30 * time.Second}
+var placeholderRe = regexp.MustCompile(`\{\{([a-zA-Z0-9_]+)\}\}`)
 
 // Ticket is the workflow-facing normalized issue representation.
 type Ticket struct {
@@ -34,16 +39,25 @@ func jiraClient() (baseURL, token string, err error) {
 }
 
 func bindQuery(tmpl string, params map[string]string) (string, error) {
-	out := tmpl
-	for k, v := range params {
-		if strings.ContainsAny(v, "\"\n\r;") {
-			return "", fmt.Errorf("invalid parameter %q value", k)
+	var bindErr error
+	out := placeholderRe.ReplaceAllStringFunc(tmpl, func(match string) string {
+		if bindErr != nil {
+			return match
 		}
-		quoted := fmt.Sprintf("%q", v)
-		out = strings.ReplaceAll(out, "{{"+k+"}}", quoted)
-	}
-	if strings.Contains(out, "{{") {
-		return "", errors.New("unbound query template parameter")
+		key := match[2 : len(match)-2]
+		v, ok := params[key]
+		if !ok {
+			bindErr = fmt.Errorf("unbound query template parameter %q", key)
+			return match
+		}
+		if strings.ContainsAny(v, "\"\n\r;") {
+			bindErr = fmt.Errorf("invalid parameter %q value", key)
+			return match
+		}
+		return fmt.Sprintf("%q", v)
+	})
+	if bindErr != nil {
+		return "", bindErr
 	}
 	return out, nil
 }
@@ -64,7 +78,7 @@ func doJira(ctx context.Context, method, path string, body any) ([]byte, error) 
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := jiraHTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}

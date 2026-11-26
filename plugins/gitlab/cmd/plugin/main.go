@@ -99,7 +99,7 @@ func listMRs(ctx context.Context, project, state string) ([]MergeRequest, error)
 	encoded := url.PathEscape(project)
 	var all []MergeRequest
 	for page := 1; ; page++ {
-		out, err := runGLab(ctx, "api", fmt.Sprintf("projects/%s/merge_requests?state=%s&per_page=100&page=%d", encoded, state, page))
+		out, err := runGLab(ctx, "api", fmt.Sprintf("projects/%s/merge_requests?state=%s&per_page=100&page=%d", encoded, url.QueryEscape(state), page))
 		if err != nil {
 			return nil, err
 		}
@@ -178,7 +178,7 @@ func main() {
 			}
 			for _, mr := range existing {
 				if mr.HeadRef == in.SourceBranch {
-					return map[string]any{"reused": true, "merge_request": mr, "pull_request": mr}, nil
+					return map[string]any{"reused": true, "url": mr.URL, "merge_request": mr, "pull_request": mr}, nil
 				}
 			}
 			out, err := runGLab(ctx, "mr", "create", "--repo", in.Project, "--source-branch", in.SourceBranch, "--target-branch", in.TargetBranch, "--title", in.Title, "--description", in.Description, "--yes")

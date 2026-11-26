@@ -89,10 +89,41 @@ exit 0
 	if err != nil {
 		t.Fatalf("open-or-reuse-pr: %v", err)
 	}
-	var reuseOut struct{ Reused bool }
-	_ = json.Unmarshal(reuseRes.Output, &reuseOut)
-	if !reuseOut.Reused {
-		t.Fatalf("expected reused=true, got %s", string(reuseRes.Output))
+	var reuseOut struct {
+		Reused bool   `json:"reused"`
+		URL    string `json:"url"`
+	}
+	if err := json.Unmarshal(reuseRes.Output, &reuseOut); err != nil {
+		t.Fatalf("unmarshal reuse: %v", err)
+	}
+	if !reuseOut.Reused || reuseOut.URL != "https://gh/1" {
+		t.Fatalf("expected reused=true and url, got %s", string(reuseRes.Output))
+	}
+
+	// get-pull-request, reply-comment, request-review, and successful merge-pr.
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "github.get-pull-request",
+		Input: map[string]any{"repository": "flows/core", "number": 1},
+	}); err != nil {
+		t.Fatalf("get-pull-request: %v", err)
+	}
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "github.reply-comment",
+		Input: map[string]any{"repository": "flows/core", "number": 1, "body": "addressed"},
+	}); err != nil {
+		t.Fatalf("reply-comment: %v", err)
+	}
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "github.request-review",
+		Input: map[string]any{"repository": "flows/core", "number": 1, "reviewers": []string{"alice"}},
+	}); err != nil {
+		t.Fatalf("request-review: %v", err)
+	}
+	if _, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary: bin, Operation: "github.merge-pr",
+		Input: map[string]any{"repository": "flows/core", "number": 1, "expected_head_sha": "sha-NEW"},
+	}); err != nil {
+		t.Fatalf("merge-pr success path: %v", err)
 	}
 
 	// Changed head SHA on merge fails.

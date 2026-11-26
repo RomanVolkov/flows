@@ -8,6 +8,12 @@ inputs:
   repository:
     type: string
     required: true
+  repo_root:
+    type: string
+    required: true
+  target_dir:
+    type: string
+    required: true
   base_branch:
     type: string
     default: main
@@ -34,11 +40,11 @@ inputs:
     required: true
 nodes:
   prepare_checkout:
-    uses: git.prepare-checkout
+    uses: git.checkout
     with:
-      repo_path: ${{ inputs.repository }}
+      repo_root: ${{ inputs.repo_root }}
+      target_dir: ${{ inputs.target_dir }}
       branch: ${{ inputs.branch }}
-      base_ref: ${{ inputs.base_branch }}
   implement:
     uses: core.harness
     needs: [prepare_checkout]
@@ -48,7 +54,7 @@ nodes:
       arguments:
         group_id: ${{ inputs.group_id }}
         plan_path: ${{ inputs.plan_path }}
-        checkout_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+        checkout_path: ${{ nodes.prepare_checkout.outputs.path }}
   review_code:
     uses: core.harness
     needs: [implement]
@@ -57,7 +63,7 @@ nodes:
       prompt_template: ../prompts/review-code.md
       arguments:
         group_id: ${{ inputs.group_id }}
-        checkout_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+        checkout_path: ${{ nodes.prepare_checkout.outputs.path }}
     outputs:
       approved: {type: boolean, required: true}
   verify:
@@ -66,12 +72,13 @@ nodes:
     with:
       command: /bin/sh
       args: ["-c", "${{ inputs.verify_command }}"]
-      cwd: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+      cwd: ${{ nodes.prepare_checkout.outputs.path }}
   push_branch:
-    uses: git.push-branch
+    uses: git.push
     needs: [verify]
     with:
-      repo_path: ${{ nodes.prepare_checkout.outputs.checkout_path }}
+      path: ${{ nodes.prepare_checkout.outputs.path }}
+      remote: origin
       branch: ${{ inputs.branch }}
   open_or_reuse_pr:
     uses: github.open-or-reuse-pr

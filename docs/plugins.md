@@ -11,7 +11,7 @@ Each plugin package includes `tool.yaml` declaring:
 
 ## Shipped Plugins
 
-- `plugins/git`: `git.prepare-checkout`, `git.push-branch`, `git.cleanup-checkout`
+- `plugins/git`: `git.checkout`, `git.verify`, `git.status`, `git.commit`, `git.push`
 - `plugins/github`: `github.list-pull-requests`, `github.get-pull-request`, `github.open-or-reuse-pr`, `github.reply-comment`, `github.request-review`, `github.merge-pr`
 - `plugins/gitlab`: `gitlab.list-merge-requests`, `gitlab.get-merge-request`, `gitlab.open-or-reuse-mr`, `gitlab.reply-discussion`, `gitlab.request-review`, `gitlab.merge-mr`
 - `plugins/jira`: `jira.search-issues`, `jira.get-issue`, `jira.transition-issue`

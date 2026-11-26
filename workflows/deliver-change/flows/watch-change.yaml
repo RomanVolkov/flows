@@ -62,7 +62,7 @@ nodes:
   merge_github:
     uses: github.merge-pr
     needs: [address_comments]
-    when: ${{ inputs.use_github }}
+    when: ${{ nodes.address_comments.outputs.ready_to_merge }}
     with:
       repository: ${{ inputs.repository }}
       number: ${{ inputs.request_number }}

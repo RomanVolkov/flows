@@ -50,6 +50,26 @@ func TestUpgradeRollbackUninstallAndReinstall(t *testing.T) {
 		t.Fatal("v2 bundle file should have been rolled back")
 	}
 
+	// Validate failure also rolls back bundle and removes stale WAL/SHM.
+	if err := os.WriteFile(storePath+"-wal", []byte("stale-wal"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err = Upgrade(context.Background(), UpgradeOptions{
+		HomeDir:   home,
+		NewBundle: b2,
+		StorePath: storePath,
+		Migrate: func(_ context.Context, p string) error {
+			return os.WriteFile(p, []byte("migrated-v2"), 0600)
+		},
+		Validate: func(context.Context) error { return errors.New("post-check failed") },
+	})
+	if err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("expected validate rollback, got %v", err)
+	}
+	if _, err := os.Stat(storePath + "-wal"); !os.IsNotExist(err) {
+		t.Fatal("stale WAL should be removed on rollback")
+	}
+
 	// 2. Successful upgrade replays retained receipts once and cleans backups.
 	replayed := 0
 	if err := Upgrade(context.Background(), UpgradeOptions{
@@ -85,6 +105,10 @@ func TestUpgradeRollbackUninstallAndReinstall(t *testing.T) {
 	}
 	if target, err := os.Readlink(cliLink); err != nil || target != "/usr/local/bin/other-flows" {
 		t.Fatalf("foreign CLI symlink should be preserved, got target=%q err=%v", target, err)
+	}
+	// Remove foreign symlink before testing clean reinstall.
+	if err := os.Remove(cliLink); err != nil {
+		t.Fatal(err)
 	}
 	// Reinstall after uninstall succeeds cleanly.
 	if _, err := Install(context.Background(), Options{

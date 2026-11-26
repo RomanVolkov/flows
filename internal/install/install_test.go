@@ -10,9 +10,9 @@ import (
 )
 
 type fakeLaunchdRunner struct {
-	calls     [][]string
-	printed   bool
-	failBoot  bool
+	calls    [][]string
+	printed  bool
+	failBoot bool
 }
 
 func (f *fakeLaunchdRunner) Run(_ context.Context, args ...string) (string, error) {
@@ -50,8 +50,12 @@ func makeFakeBundle(t *testing.T) string {
 			t.Fatal(err)
 		}
 	}
-	_ = os.WriteFile(filepath.Join(b, "Contents/Resources/spec/v1/authoring.md"), []byte("# spec\n"), 0644)
-	_ = os.WriteFile(filepath.Join(b, "Contents/Resources/workflows/review-open-prs/workflow.yaml"), []byte("schema: flows/v1\n"), 0644)
+	if err := os.WriteFile(filepath.Join(b, "Contents/Resources/spec/v1/authoring.md"), []byte("# spec\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(b, "Contents/Resources/workflows/review-open-prs/workflow.yaml"), []byte("schema: flows/v1\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	return b
 }
 
@@ -104,8 +108,36 @@ func TestInstallTwiceSpacesAndUserEditedWorkflow(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "step register launchd") {
 		t.Fatalf("expected step register launchd failure, got %v", err)
 	}
-	raw2, _ := os.ReadFile(userWF)
-	if !strings.Contains(string(raw2), "# user customized") {
+	raw2, err := os.ReadFile(userWF)
+	if err != nil || !strings.Contains(string(raw2), "# user customized") {
 		t.Fatal("user file lost on failed registration")
+	}
+
+	// Failed HealthCheck reports step daemon health check.
+	if _, err := Install(context.Background(), Options{
+		HomeDir:      home,
+		SourceBundle: bundle,
+		IsDevHome:    true,
+		Runner:       runner,
+		HealthCheck:  func(context.Context) error { return errors.New("protocol mismatch") },
+	}); err == nil || !strings.Contains(err.Error(), "step daemon health check") {
+		t.Fatalf("expected health check error, got %v", err)
+	}
+
+	// Preexisting CLI link conflict is rejected without clobbering.
+	cliLink := filepath.Join(home, ".local/bin/flows")
+	if err := os.Remove(cliLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/usr/local/bin/foreign-flows", cliLink); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Install(context.Background(), Options{
+		HomeDir:      home,
+		SourceBundle: bundle,
+		IsDevHome:    true,
+		Runner:       runner,
+	}); err == nil || !strings.Contains(err.Error(), "step check cli link") {
+		t.Fatalf("expected cli link conflict error, got %v", err)
 	}
 }
