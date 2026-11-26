@@ -1,0 +1,34 @@
+schema: flows/tool/v1
+id: github
+version: 1.0.0
+owner: flows
+description: GitHub PR, review, CI, and merge operations via gh
+credentials:
+  - id: github-cli
+    provider: github
+    required: true
+operations:
+  - id: github.list-pull-requests
+    description: List pull requests with pagination
+    execution_kind: plugin
+    read_only: true
+    output_schema:
+      type: object
+      properties:
+        pull_requests: {type: array}
+  - id: github.get-pull-request
+    description: Inspect PR head SHA, files, CI status, and review threads
+    execution_kind: plugin
+    read_only: true
+  - id: github.open-or-reuse-pr
+    description: Open a pull request or reuse an existing one for the branch
+    execution_kind: plugin
+  - id: github.reply-comment
+    description: Reply to a PR review thread
+    execution_kind: plugin
+  - id: github.request-review
+    description: Request reviewers on a PR
+    execution_kind: plugin
+  - id: github.merge-pr
+    description: Merge a PR pinned to expected head SHA
+    execution_kind: plugin
