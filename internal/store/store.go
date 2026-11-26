@@ -18,7 +18,7 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 type Store struct {
 	db *sql.DB
@@ -72,7 +72,7 @@ func (s *Store) init(ctx context.Context) error {
 	if version > schemaVersion {
 		return fmt.Errorf("database schema %d is newer than supported schema %d", version, schemaVersion)
 	}
-	if version == 0 {
+	if version < 1 {
 		script, err := migrations.ReadFile("migrations/001_initial.sql")
 		if err != nil {
 			return err
@@ -80,11 +80,30 @@ func (s *Store) init(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, string(script)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=1"); err != nil {
+	}
+	if version < 2 {
+		script, err := migrations.ReadFile("migrations/002_usage.sql")
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=2"); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// DB exposes the underlying SQLite handle for domain packages like usage.
+func (s *Store) DB() *sql.DB { return s.db }
+
+// WriteTx executes fn under the store's serialized writer lock.
+func (s *Store) WriteTx(ctx context.Context, fn func(*sql.Tx, int64) error) error {
+	return s.write(ctx, func(tx *writeTx) error {
+		return fn(tx.Tx, tx.now)
+	})
 }
 
 // Changes closes after an event transaction commits. A reader can take this
