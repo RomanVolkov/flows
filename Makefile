@@ -34,7 +34,7 @@ install: package
 	@mkdir -p "$${HOME}/Applications" "$${HOME}/.local/bin"
 	@rm -rf "$${HOME}/Applications/Flows.app"
 	@cp -R build/dist/Flows.app "$${HOME}/Applications/Flows.app"
-	@ln -sf "$${HOME}/Applications/Flows.app/Contents/MacOS/flows" "$${HOME}/.local/bin/flows"
+	@ln -sf "$${HOME}/Applications/Flows.app/Contents/Resources/bin/flows" "$${HOME}/.local/bin/flows"
 	@$(MAKE) install-spec
 
 uninstall:

@@ -9,9 +9,10 @@ trap 'rm -rf "${OUT_DIR}"' EXIT
 VERSION="${VERSION}" ARCH="${ARCH}" OUT_DIR="${OUT_DIR}" sh build/package-macos.sh
 
 APP="${OUT_DIR}/Flows.app/Contents"
-for bin in Flows flows flowsd flows-host; do
+for bin in Flows flowsd flows-host; do
   test -x "${APP}/MacOS/${bin}"
 done
+test -x "${APP}/Resources/bin/flows"
 for plugin in git github gitlab jira youtrack zulip; do
   test -f "${APP}/Resources/plugins/${plugin}/tool.yaml"
   test -x "${APP}/Resources/plugins/${plugin}/${plugin}-plugin"
@@ -27,7 +28,7 @@ test -f "${ARCHIVE}.sha256"
 (cd "${OUT_DIR}" && shasum -a 256 -c "$(basename "${ARCHIVE}.sha256")")
 
 # Execute packaged CLI binary, lint Info.plist, and verify plugin handshake.
-"${APP}/MacOS/flows" version | grep -q "${VERSION}"
+"${APP}/Resources/bin/flows" version | grep -q "${VERSION}"
 if command -v plutil >/dev/null 2>&1; then
   plutil -lint "${APP}/Info.plist" >/dev/null
 fi

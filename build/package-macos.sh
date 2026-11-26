@@ -9,6 +9,7 @@ CONTENTS="${APP_DIR}/Contents"
 
 rm -rf "${APP_DIR}"
 mkdir -p "${CONTENTS}/MacOS" \
+  "${CONTENTS}/Resources/bin" \
   "${CONTENTS}/Resources/plugins" \
   "${CONTENTS}/Resources/workflows" \
   "${CONTENTS}/Resources/spec/v1" \
@@ -22,14 +23,14 @@ if command -v plutil >/dev/null 2>&1; then
   plutil -replace CFBundleShortVersionString -string "${VERSION}" "${CONTENTS}/Info.plist"
 fi
 
-# Build core binaries.
-for name in flows flowsd flows-host; do
+# Build core binaries (CLI in Resources/bin/flows so it never collides with MacOS/Flows on case-insensitive APFS).
+go build -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=${VERSION}" \
+  -o "${CONTENTS}/Resources/bin/flows" "./cmd/flows"
+for name in flowsd flows-host; do
   go build -trimpath -ldflags "-X github.com/romanvolkov/flows/internal/command.Version=${VERSION}" \
     -o "${CONTENTS}/MacOS/${name}" "./cmd/${name}"
 done
-if [ ! -e "${CONTENTS}/MacOS/Flows" ]; then
-  cp "${CONTENTS}/MacOS/flows" "${CONTENTS}/MacOS/Flows"
-fi
+clang -fobjc-arc -framework AppKit -framework CoreText desktop/macos/main.m -o "${CONTENTS}/MacOS/Flows"
 
 # Prebuild shipped plugins so the packaged app runs without a compiler.
 for plugin in git github gitlab jira youtrack zulip; do
