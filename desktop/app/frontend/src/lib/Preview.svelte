@@ -11,6 +11,7 @@
   let message = $state('Loading preview…')
   let metrics: Metrics | undefined
   let connection = ''
+  let unsubscribe: (() => void) | undefined
   let timer = 0
   let stopped = false
   let pending = false
@@ -76,19 +77,21 @@
     const api = window.go.main.App
     try {
       connection = await api.OpenPreview(attempt)
-      while (!stopped) {
-        const frame = JSON.parse(await api.ReadTerminal(connection))
-        if (stopped || frame.kind === 6) break
+      if (stopped) return
+      unsubscribe = window.runtime.EventsOn(`flows:terminal:${connection}`, (frame: { kind: number; data: string }) => {
         if (frame.kind === 7) {
-          screen = applyFrame(screen ?? blank(), JSON.parse(new TextDecoder().decode(decode(frame.payload))))
+          screen = applyFrame(screen ?? blank(), JSON.parse(frame.data))
           message = ''
         } else if (frame.kind === 1 && !screen) {
-          break // Hosts without cell frames expose their text through the snapshot endpoint.
+          // Hosts without cell frames expose their text through the snapshot endpoint.
+          void api.Detach(connection)
         }
-      }
+      })
+      await api.StreamTerminal(connection)
     } catch {
       // Previously launched hosts only support snapshot previews.
     } finally {
+      unsubscribe?.()
       if (connection) await api.Detach(connection).catch(() => {})
       if (!stopped) void refresh()
     }
@@ -100,6 +103,7 @@
     else void refresh()
     return () => {
       stopped = true
+      unsubscribe?.()
       clearTimeout(timer)
       if (connection) { void window.go.main.App.Detach(connection); connection = '' }
     }

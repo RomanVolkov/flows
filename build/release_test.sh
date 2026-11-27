@@ -34,4 +34,29 @@ if command -v plutil >/dev/null 2>&1; then
 fi
 printf '{"protocol":1,"kind":"describe","request_id":"d1"}\n' | "${APP}/Resources/plugins/git/git-plugin" | grep -q '"git.checkout"'
 
+# Exercise the same library initialization as both installers in an isolated home.
+export FLOWS_HOME="${OUT_DIR}/test-home"
+cli="${APP}/Resources/bin/flows"
+"$cli" install-bundled
+for plugin in git github gitlab jira youtrack zulip; do
+  test -x "${FLOWS_HOME}/config/tools/${plugin}/${plugin}-plugin"
+done
+for wf in review-open-prs deliver-change; do
+  "$cli" validate "${FLOWS_HOME}/config/workflows/${wf}"
+done
+"$cli" catalog describe git.checkout --json | grep -q '"enabled":true'
+
+mv "${FLOWS_HOME}/config/workflows/review-open-prs" "${OUT_DIR}/removed-workflow"
+mv "${FLOWS_HOME}/config/tools/git" "${OUT_DIR}/removed-tool"
+prompt="${FLOWS_HOME}/config/workflows/deliver-change/prompts/group.md"
+echo 'User edit' >> "$prompt"
+"$cli" install-bundled
+test ! -e "${FLOWS_HOME}/config/workflows/review-open-prs"
+test ! -e "${FLOWS_HOME}/config/tools/git"
+grep -q 'User edit' "$prompt"
+if "$cli" catalog describe git.checkout --json >/dev/null 2>&1; then
+  echo 'Removed starter tool still in catalog' >&2
+  exit 1
+fi
+
 echo "release_test passed"

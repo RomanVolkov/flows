@@ -447,3 +447,47 @@ func TestCompletionOutboxPersistenceAndErrors(t *testing.T) {
 		t.Fatalf("expected error for escaping artifact name")
 	}
 }
+
+type bufferedScreen struct {
+	pending []byte
+}
+
+func (s *bufferedScreen) Feed(data []byte, _ *os.File) {
+	s.pending = append(s.pending, data...)
+}
+func (s *bufferedScreen) Resize(pty.Winsize) error { return nil }
+func (s *bufferedScreen) Replay() ([]byte, error)  { return nil, nil }
+func (s *bufferedScreen) RenderFrame(bool) ([]byte, error) {
+	data := s.pending
+	s.pending = nil
+	return data, nil
+}
+
+func TestScreenPumpCoalescesOutputForCanvasClients(t *testing.T) {
+	canvas := &attachObserver{out: make(chan Frame, 4), screenOnly: true}
+	raw := &attachObserver{out: make(chan Frame, 4)}
+	h := &Host{
+		cfg: Config{State: &bufferedScreen{}}, done: make(chan struct{}), screenWake: make(chan struct{}, 1),
+		observers: map[string]*attachObserver{"canvas": canvas, "raw": raw},
+	}
+	defer close(h.done)
+
+	h.publishOutput([]byte("one"))
+	h.publishOutput([]byte("two"))
+	for _, want := range []string{"one", "two"} {
+		if f := <-raw.out; f.Kind != FrameOutput || string(f.Payload) != want {
+			t.Fatalf("raw client received %+v; want output %q", f, want)
+		}
+	}
+	go h.pumpScreen()
+	for _, observer := range []*attachObserver{canvas, raw} {
+		select {
+		case f := <-observer.out:
+			if f.Kind != FrameScreen || f.Seq != 6 || string(f.Payload) != "onetwo" {
+				t.Fatalf("received %+v; want a screen frame containing both writes", f)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("screen pump failed to flush pending output")
+		}
+	}
+}

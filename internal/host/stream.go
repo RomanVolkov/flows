@@ -69,8 +69,9 @@ type ExitEvent struct {
 }
 
 type attachObserver struct {
-	id  string
-	out chan Frame
+	id         string
+	out        chan Frame
+	screenOnly bool
 }
 
 func encodeFrame(f Frame) ([]byte, error) {
@@ -186,10 +187,14 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request, preview bool)
 		_ = conn.Close(websocket.StatusPolicyViolation, "stale attach epoch")
 		return
 	}
-	replay := h.snapshotLocked()
 	var screenReplay []byte
 	if state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) }); ok {
 		screenReplay, _ = state.SnapshotFrame()
+	}
+	obs.screenOnly = q.Get("screen") == "true" && len(screenReplay) > 0
+	var replay []byte
+	if len(screenReplay) == 0 {
+		replay = h.snapshotLocked()
 	}
 	seq := h.record.StreamSeq
 	cols, rows := h.record.Cols, h.record.Rows
@@ -378,17 +383,13 @@ func (h *Host) handleClientFrame(clientID string, frame Frame, reply func(Frame)
 				go func() { _ = h.RequestStop(2 * time.Second) }()
 			}
 		case "scroll":
+			h.mu.Lock()
 			if state, ok := h.cfg.State.(interface{ Scroll(int) (bool, error) }); ok {
-				if _, err := state.Scroll(ctrl.Rows); err == nil {
-					if render, ok := h.cfg.State.(interface{ RenderFrame(bool) ([]byte, error) }); ok {
-						if payload, err := render.RenderFrame(true); err == nil {
-							h.mu.Lock()
-							h.broadcastLocked(Frame{Kind: FrameScreen, Seq: h.record.StreamSeq, Payload: payload})
-							h.mu.Unlock()
-						}
-					}
+				if moved, err := state.Scroll(ctrl.Rows); err == nil && moved {
+					h.flushScreenLocked(true)
 				}
 			}
+			h.mu.Unlock()
 		}
 	}
 	return nil
@@ -409,10 +410,11 @@ func writeWSFrame(ctx context.Context, conn *websocket.Conn, f Frame) error {
 
 // AttachOptions configures a WebSocket attach client.
 type AttachOptions struct {
-	Preview  bool
-	ClientID string
-	Epoch    uint64
-	Nonce    string
+	Preview    bool
+	ScreenOnly bool
+	ClientID   string
+	Epoch      uint64
+	Nonce      string
 }
 
 // AttachConn is a client WebSocket connection to /v1/sessions/{id}/attach.
@@ -431,6 +433,9 @@ func DialAttach(ctx context.Context, socketPath, sessionID string, opts AttachOp
 		},
 	}
 	q := url.Values{}
+	if opts.ScreenOnly {
+		q.Set("screen", "true")
+	}
 	if opts.ClientID != "" {
 		q.Set("client_id", opts.ClientID)
 	}

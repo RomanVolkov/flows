@@ -37,6 +37,17 @@ test('selects a canvas node, opens its terminal, sends input and detaches', asyn
   const terminal = page.getByRole('dialog', { name: 'Review changes' })
   await expect(terminal.getByText('Mock shell')).toBeVisible()
   await expect(terminal.locator('canvas')).toBeVisible()
+  await page.evaluate(() => {
+    window.mockDesktop.emit('flows:terminal:terminal:attempt-1', {
+      kind: 7,
+      data: JSON.stringify({
+        title: 'Updated shell', cols: 20, rows: 4, fg: 0xffffff, bg: 0x101019,
+        cursor: { x: 1, y: 0, visible: true, style: 'block' },
+        lines: [{ y: 0, cells: [{ t: 'x' }] }],
+      }),
+    })
+  })
+  await expect(terminal.getByText('Updated shell')).toBeVisible()
   await terminal.getByLabel('terminal input').press('x')
   await expect.poll(() => page.evaluate(() => window.mockDesktop.calls)).toContainEqual({
     action: 'input', args: ['terminal:attempt-1', 'x'],
@@ -50,3 +61,25 @@ test('selects a canvas node, opens its terminal, sends input and detaches', asyn
   await expect(page.getByRole('heading', { name: 'Review changes' })).toHaveCount(0)
   await expect(page.locator('footer')).toContainText('0 nodes')
 })
+
+for (const kind of ['Workflow', 'Tool']) {
+  test(`starts the authoring interview for the selected ${kind.toLowerCase()}`, async ({ page, launch }) => {
+    await launch()
+    await page.getByRole('button', { name: /New session/ }).click()
+    const dialog = page.getByRole('dialog', { name: 'New session' })
+    await dialog.getByLabel('Scenario').selectOption('authoring')
+    await dialog.getByRole('button', { name: kind, exact: true }).click()
+    const start = dialog.getByRole('button', { name: 'Create', exact: true })
+    await expect(start).toBeDisabled()
+    await dialog.getByLabel('What’s the main idea?').fill('Review open merge requests')
+    await start.click()
+    await expect(dialog).toHaveCount(0)
+    const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'newSession')?.args[0])
+    const { prompt } = JSON.parse(String(body))
+    expect(prompt).toContain('one decision per turn')
+    expect(prompt).toContain('core.harness')
+    expect(prompt).toContain('flows validate "<package-directory>" --json')
+    expect(prompt).toContain('The user selected: ' + kind.toLowerCase())
+    expect(prompt).toContain('Their main idea: Review open merge requests')
+  })
+}

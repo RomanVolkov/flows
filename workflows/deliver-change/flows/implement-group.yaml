@@ -50,7 +50,7 @@ nodes:
     needs: [prepare_checkout]
     with:
       harness: ${{ inputs.harness }}
-      prompt_template: ../prompts/implement.md
+      prompt_template: ./prompts/implement.md
       arguments:
         group_id: ${{ inputs.group_id }}
         plan_path: ${{ inputs.plan_path }}
@@ -60,9 +60,11 @@ nodes:
     needs: [implement]
     with:
       harness: ${{ inputs.reviewer_harness }}
-      prompt_template: ../prompts/review-code.md
+      prompt_template: ./prompts/review-code.md
       arguments:
         group_id: ${{ inputs.group_id }}
+        plan_path: ${{ inputs.plan_path }}
+        base_branch: ${{ inputs.base_branch }}
         checkout_path: ${{ nodes.prepare_checkout.outputs.path }}
     outputs:
       approved: {type: boolean, required: true}

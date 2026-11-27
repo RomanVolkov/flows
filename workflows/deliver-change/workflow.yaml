@@ -55,6 +55,7 @@ nodes:
       prompt_template: ./prompts/reconcile-plans.md
       arguments:
         request: ${{ inputs.request }}
+        plans: ${{ nodes.plan_group.outputs }}
     outputs:
       approved: {type: boolean, required: true}
 outputs:

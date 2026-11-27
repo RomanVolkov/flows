@@ -13,6 +13,8 @@ cask "romanvolkov/flows/flows"
 
 Run `brew bundle` to install, or `brew upgrade --cask romanvolkov/flows/flows` to update. The user-domain package installs Flows.app in ~/Applications, links the CLI, and registers the per-user LaunchAgent. Updates restart the daemon. Its installer clears the quarantine attribute on the installed app.
 
+The first install that supports starter packages adds them to the user library. Later updates preserve edits and deletions.
+
 Pushing a stable `vMAJOR.MINOR.PATCH` tag builds and smoke-tests the installer, publishes it to GitHub Releases, then updates the checksummed cask on the default branch. The workflow needs permission to push that cask update. The first successful release creates the tap entry.
 
 ## Quickstart
@@ -38,7 +40,7 @@ Run `make ui-check` for the WebKit UI tests alone. They load the production fron
 
 ## CLI & Build Targets
 
-- `flows`: `version`, `status`, `shutdown`, `validate <workflow.yaml>`, `spec {path|show [authoring|protocol|workflow|tool]}`
+- `flows`: `version`, `status`, `shutdown`, `validate <package-directory> [--json]`, `spec {path|show [authoring|protocol|workflow|tool]}`
 - `flowsd`: `run`, `--foreground`
 - `flows-host`: `serve`, `attach`
 - `Makefile`: `build`, `plugins`, `desktop`, `package`, `install`, `install-spec`, `uninstall`, `check`, `desktop-check`, `integration`, `doctor` (plus `build/macos.mk`: `deps`, `fonts`, `libghostty`, `terminal-probe`, `terminal-probe-check`)

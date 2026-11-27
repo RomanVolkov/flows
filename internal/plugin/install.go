@@ -14,6 +14,7 @@ import (
 
 // ActiveTool records the currently active build receipt and source location for a tool.
 type ActiveTool struct {
+	Bundled     bool         `json:"bundled,omitempty"`
 	ToolID      string       `json:"tool_id"`
 	SourceDir   string       `json:"source_dir"`
 	Entry       string       `json:"entry,omitempty"`
@@ -83,6 +84,7 @@ func Rollback(home paths.Home, toolID, cacheKey string) (ActiveTool, error) {
 	cur, _ := LoadActiveTool(home, toolID)
 	active := ActiveTool{
 		ToolID:      toolID,
+		Bundled:     cur.Bundled,
 		SourceDir:   cur.SourceDir,
 		Entry:       cur.Entry,
 		Receipt:     rec,
@@ -103,6 +105,11 @@ func LoadActiveTool(home paths.Home, toolID string) (ActiveTool, error) {
 	var active ActiveTool
 	if err := json.Unmarshal(data, &active); err != nil {
 		return ActiveTool{}, err
+	}
+	if active.Bundled {
+		if _, err := os.Stat(filepath.Join(active.SourceDir, "tool.yaml")); err != nil {
+			return ActiveTool{}, err
+		}
 	}
 	return active, nil
 }

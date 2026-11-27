@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/romanvolkov/flows/internal/catalog"
@@ -13,6 +14,7 @@ import (
 	"github.com/romanvolkov/flows/internal/command"
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/paths"
+	"github.com/romanvolkov/flows/internal/plugin"
 )
 
 func main() {
@@ -32,6 +34,12 @@ func run() int {
 	}
 	if len(args) == 1 {
 		switch args[0] {
+		case "install-bundled":
+			if err := installBundled(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 1
+			}
+			return 0
 		case "status", "shutdown":
 			if err := service(args[0]); err != nil {
 				fmt.Fprintln(os.Stderr, err)
@@ -46,6 +54,22 @@ func run() int {
 	return command.Run("flows", args, os.Stdout, os.Stderr)
 }
 
+func installBundled() error {
+	home, err := paths.Resolve()
+	if err != nil {
+		return err
+	}
+	bin, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	bin, err = filepath.EvalSymlinks(bin)
+	if err != nil {
+		return err
+	}
+	return library.InstallBundled(home, filepath.Dir(filepath.Dir(bin)))
+}
+
 func runCatalog(args []string) int {
 	home, err := paths.Resolve()
 	if err != nil {
@@ -58,7 +82,16 @@ func runCatalog(args []string) int {
 		return 1
 	}
 	if snap, err := library.Scan(home, nil); err == nil {
-		_ = library.PublishTools(snap, reg, nil)
+		activated := make(map[string]bool)
+		tools, err := plugin.NewRegistry(home).ListActive()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		for _, tool := range tools {
+			activated[tool.ToolID] = true
+		}
+		_ = library.PublishTools(snap, reg, activated)
 	}
 	jsonOut := false
 	for _, arg := range args {

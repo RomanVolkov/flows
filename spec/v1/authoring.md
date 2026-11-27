@@ -14,5 +14,7 @@ Schema versions:
 1. Read `authoring.md` and `protocol.md` from `flows spec path --version 1`.
 2. Inspect available operations via `flows catalog list --json` and `flows catalog describe <id> --json`.
 3. Author `workflow.yaml` or `tool.yaml` (using the local `sdk/go` module reference in `examples/sdk-tool/go.mod`).
-4. Validate statically with `flows validate <dir> --json` until exit code is 0.
-5. Import into the user library with `flows import <dir>`.
+4. Run `flows validate "<dir>" --json` for each tool or workflow package. The directory contains the manifest. Fix reported diagnostics and rerun until the exit code is zero and the report has `valid: true`. This checks package compatibility. Runtime credentials and behavior require separate checks.
+5. Import the validated package from **New → Import a workflow or external tool**.
+
+The bundled `validate-package` workflow runs the same validator as a tool node. Pass the local package directory as its `directory` input. The command emits the JSON diagnostic report and exits nonzero for an invalid package.

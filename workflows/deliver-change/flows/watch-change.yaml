@@ -51,11 +51,13 @@ nodes:
     needs: [inspect_github, inspect_gitlab]
     with:
       harness: claude
-      prompt_template: ../prompts/address-comments.md
+      prompt_template: ./prompts/address-comments.md
       arguments:
         repository: ${{ inputs.repository }}
         request_number: ${{ inputs.request_number }}
         expected_head_sha: ${{ inputs.expected_head_sha }}
+        use_github: ${{ inputs.use_github }}
+        use_gitlab: ${{ inputs.use_gitlab }}
     outputs:
       ready_for_github: {type: boolean, required: true}
       ready_for_gitlab: {type: boolean, required: true}

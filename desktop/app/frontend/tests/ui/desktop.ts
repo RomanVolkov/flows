@@ -52,13 +52,13 @@ function installBridge(initial: Snapshot) {
     newSession: { node_id: 'node-1' },
   }
   function frame(kind: number, payload: unknown) {
-    return JSON.stringify({ kind, payload: btoa(JSON.stringify(payload)) })
+    return { kind, data: JSON.stringify(payload) }
   }
   const screen = frame(7, { full: true, title: 'Mock shell', cols: 20, rows: 4,
     fg: 0xffffff, bg: 0x101019, cursor: { x: 0, y: 0, visible: false, style: 'block' },
     lines: [{ y: 0, cells: [{ t: '$' }] }] })
-  const streams = new Map<string, string[]>()
-  const readers = new Map<string, (frame: string) => void>()
+  const streams = new Map<string, ReturnType<typeof frame>[]>()
+  const readers = new Map<string, () => void>()
   const app = {
     Follow() { emit('flows:snapshot', initial) },
     async Request(action: string, payload: string) {
@@ -71,20 +71,20 @@ function installBridge(initial: Snapshot) {
       streams.set(id, [screen])
       return id
     },
-    async Attach(attempt: string) {
+    async AttachScreen(attempt: string) {
       const id = 'terminal:' + attempt
       streams.set(id, [frame(5, { owner_id: id }), screen])
       return id
     },
-    async ReadTerminal(id: string) {
-      const next = streams.get(id)?.shift()
-      return next ?? new Promise<string>(resolve => readers.set(id, resolve))
+    async StreamTerminal(id: string) {
+      for (const next of streams.get(id) ?? []) emit('flows:terminal:' + id, next)
+      await new Promise<void>(resolve => readers.set(id, resolve))
     },
     async ResizeTerminal() {},
     async WriteTerminal(id: string, data: string) { calls.push({ action: 'input', args: [id, data] }) },
     async Detach(id: string) {
       calls.push({ action: 'detach', args: [id] })
-      readers.get(id)?.(frame(6, {}))
+      readers.get(id)?.()
       readers.delete(id)
       streams.delete(id)
     },

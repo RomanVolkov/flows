@@ -53,7 +53,7 @@
   busy=true;error=''
   try {
    if(scenario==='session'||scenario==='authoring'){
-    const prompt=scenario==='authoring'?`${authoringPrompt}\n\nThe user selected: ${authoringType}.\nTheir main idea: ${idea.trim()}\n\nBegin the session by acknowledging their idea and asking one concise question that clarifies the intended outcome. Do not ask them to choose between a tool and workflow again. Continue with one question at a time. Do not write files until they explicitly choose implementation.`:message
+    const prompt=scenario==='authoring'?`${authoringPrompt}\n\nThe user selected: ${authoringType}.\nTheir main idea: ${idea.trim()}`:message
     const result=await request<{node_id:string}>('newSession',JSON.stringify({request_id:id,harness:agent,work_dir:repo.trim(),prompt}))
     if(repo.trim()){
      try{localStorage.setItem('flows.repos',JSON.stringify([repo.trim(),...history.filter(r=>r!==repo.trim())].slice(0,30)))}catch{}
@@ -84,7 +84,7 @@
    </fieldset>
    <label for="idea">What’s the main idea?</label>
    <textarea id="idea" rows="3" bind:value={idea} placeholder="Describe what you want it to do, in your own words"></textarea>
-   <p class="hint">The selected harness will ask follow-up questions one at a time before proposing any implementation.</p>
+   <p class="hint">Answer one question at a time, then review {authoringType==='workflow'?'the tool and agent nodes':'the operation contract'} before implementation.</p>
   {/if}
   {#if scenario==='session'||scenario==='authoring'}
    <label for="repo">{scenario==='authoring'?'Working folder':'Repo'}</label>

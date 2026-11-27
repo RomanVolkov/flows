@@ -10,18 +10,24 @@ import (
 	"fmt"
 	"time"
 
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+
 	"github.com/romanvolkov/flows/internal/client"
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/localapi"
 )
 
 func (a *App) Attach(attempt string) (string, error) {
-	return a.attach(attempt, false)
+	return a.attach(attempt, false, false)
 }
 
-func (a *App) OpenPreview(attempt string) (string, error) { return a.attach(attempt, true) }
+func (a *App) AttachScreen(attempt string) (string, error) {
+	return a.attach(attempt, false, true)
+}
 
-func (a *App) attach(attempt string, preview bool) (string, error) {
+func (a *App) OpenPreview(attempt string) (string, error) { return a.attach(attempt, true, true) }
+
+func (a *App) attach(attempt string, preview, screenOnly bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	c := client.New(a.home.Socket())
@@ -35,7 +41,7 @@ func (a *App) attach(attempt string, preview bool) (string, error) {
 			continue
 		}
 		id := rand.Text()
-		conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{Preview: preview, ClientID: id, Nonce: s.StartNonce})
+		conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{Preview: preview, ScreenOnly: screenOnly, ClientID: id, Nonce: s.StartNonce})
 		if err != nil {
 			return "", err
 		}
@@ -84,6 +90,43 @@ func (a *App) ReadTerminal(id string) (string, error) {
 	data, err := json.Marshal(frame)
 	return string(data), err
 }
+
+// StreamTerminal pushes ordered frame events after the webview has subscribed.
+func (a *App) StreamTerminal(id string) error {
+	v, ok := a.terminals.Load(id)
+	if !ok {
+		return errors.New("terminal closed")
+	}
+	conn := v.(*host.AttachConn)
+	defer a.Detach(id)
+	event := "flows:terminal:" + id
+	hasScreen := false
+	for {
+		frame, err := conn.ReadFrame(a.ctx)
+		if err != nil {
+			return err
+		}
+		switch frame.Kind {
+		case host.FrameScreen:
+			hasScreen = true
+		case host.FrameOutput:
+			if hasScreen {
+				continue
+			}
+		case host.FrameInputOwner, host.FrameExit:
+		default:
+			continue
+		}
+		wailsruntime.EventsEmit(a.ctx, event, struct {
+			Kind host.FrameKind `json:"kind"`
+			Data string         `json:"data"`
+		}{frame.Kind, string(frame.Payload)})
+		if frame.Kind == host.FrameExit {
+			return nil
+		}
+	}
+}
+
 func (a *App) WriteTerminal(id, text string) error {
 	v, ok := a.terminals.Load(id)
 	if !ok {

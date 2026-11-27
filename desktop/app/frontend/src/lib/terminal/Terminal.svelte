@@ -19,7 +19,7 @@
   let selection = $state<Selection | undefined>()
   let composing = false
   let sent = { cols: 0, rows: 0 }
-  let api: any
+  let api: Window["go"]["main"]["App"]
   let terminalId = ''
   let owner = false
   let hasScreen = false
@@ -74,42 +74,45 @@
     metrics = measure(canvas.getContext('2d')!, monoStack($theme), $theme.font_size)
     api = window.go.main.App
     let stopped = false
+    let unsubscribe: (() => void) | undefined
     async function connect() {
       try {
-        terminalId = await api.Attach(sessionId)
-        if (stopped) { await api.Detach(terminalId); return }
-        while (!stopped) {
-          const frame = JSON.parse(await api.ReadTerminal(terminalId)) as { kind: number; payload: string }
-          const bytes = Uint8Array.from(atob(frame.payload ?? ''), (c) => c.charCodeAt(0))
+        terminalId = await api.AttachScreen(sessionId)
+        if (stopped) {
+          await api.Detach(terminalId)
+          return
+        }
+        unsubscribe = window.runtime.EventsOn(`flows:terminal:${terminalId}`, (frame: { kind: number; data: string }) => {
           if (frame.kind === 7) {
             hasScreen = true
             output = ''
-            screen = applyFrame(screen, JSON.parse(new TextDecoder().decode(bytes)))
-            status = ''
+            screen = applyFrame(screen, JSON.parse(frame.data))
+            if (status === 'connecting…') status = ''
           } else if (frame.kind === 1 && !hasScreen) {
-            output = (output + new TextDecoder().decode(bytes)).slice(-200_000)
-            status = ''
+            output = (output + frame.data).slice(-200_000)
+            if (status === 'connecting…') status = ''
           } else if (frame.kind === 5) {
-            owner = JSON.parse(new TextDecoder().decode(bytes)).owner_id === terminalId
+            owner = JSON.parse(frame.data).owner_id === terminalId
             status = owner ? '' : `Viewing · input owned by another terminal · ${agent}`
             if (owner) fitSize()
           } else if (frame.kind === 6) {
-            if (!stopped) onclose()
-            break
+            onclose()
           }
-        }
+        })
+        await api.StreamTerminal(terminalId)
       } catch (e) {
         if (!stopped) status = String(e)
       } finally {
         owner = false
       }
     }
-    connect()
+    void connect()
     const ro = new ResizeObserver(fitSize)
     ro.observe(box)
     input.focus()
     return () => {
       stopped = true
+      unsubscribe?.()
       ro.disconnect()
       if (terminalId) api.Detach(terminalId).catch(() => {})
     }

@@ -66,8 +66,18 @@ func TestDeliverChangePlanningAndReconciliation(t *testing.T) {
 		}
 		return sub, nil
 	}
-	if _, cdiags := workflow.Compile(def, reg, loader); len(cdiags) > 0 {
+	compiled, cdiags := workflow.Compile(def, reg, loader)
+	if len(cdiags) > 0 {
 		t.Fatalf("compile deliver-change: %+v", cdiags)
+	}
+
+	snapshot, err := workflow.CreateSnapshot("../workflows/deliver-change", compiled, reg, loader)
+	if err != nil {
+		t.Fatalf("pin deliver-change prompts: %v", err)
+	}
+	plan := snapshot.ChildSnapshots["./flows/plan-group.yaml"]
+	if plan == nil || plan.Templates["prompts/plan.md"] == "" || plan.Templates["prompts/review-plan.md"] == "" {
+		t.Fatal("launch snapshot is missing the planning prompts")
 	}
 
 	// Verify schemas/task-groups.json exists and is valid JSON.

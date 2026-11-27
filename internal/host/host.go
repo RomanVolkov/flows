@@ -30,9 +30,10 @@ import (
 )
 
 const (
-	defaultCols   = 80
-	defaultRows   = 24
-	maxScrollback = 256 * 1024
+	defaultCols    = 80
+	defaultRows    = 24
+	maxScrollback  = 256 * 1024
+	screenInterval = 16 * time.Millisecond
 )
 
 var (
@@ -147,6 +148,7 @@ type Host struct {
 	snapshotPath  string
 	screenPath    string
 	screenSaved   time.Time
+	screenWake    chan struct{}
 	exitPath      string
 	pty           *os.File
 	cmd           *exec.Cmd
@@ -290,6 +292,10 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 			Status:     "running",
 			StartedAt:  time.Now().UnixNano(),
 		},
+	}
+
+	if _, ok := cfg.State.(interface{ RenderFrame(bool) ([]byte, error) }); ok {
+		h.screenWake = make(chan struct{}, 1)
 	}
 
 	// Persist host and child process group + birth identity before allowing
@@ -477,6 +483,9 @@ func (h *Host) run(ctx context.Context) {
 	})
 	defer unblock()
 
+	if h.screenWake != nil {
+		go h.pumpScreen()
+	}
 	buf := make([]byte, maxPTYRead)
 	for {
 		n, err := h.pty.Read(buf)
@@ -518,6 +527,7 @@ func (h *Host) run(ctx context.Context) {
 	h.record.ExitSignal = exitSignal
 	h.record.ExitedAt = now
 
+	h.flushScreenLocked(false)
 	h.persistScreenLocked(true)
 	snap := h.snapshotLocked()
 	h.cfg.State = nil
@@ -561,19 +571,52 @@ func (h *Host) publishOutput(data []byte) {
 	h.appendScrollbackLocked(chunk)
 	if h.cfg.State != nil {
 		var replyTo *os.File
-		if len(h.observers) == 0 {
+		if owner := h.observers[h.ownerID]; owner == nil || owner.screenOnly {
 			replyTo = h.pty
 		}
 		h.cfg.State.Feed(chunk, replyTo)
-		h.persistScreenLocked(false)
+		if h.screenWake != nil {
+			select {
+			case h.screenWake <- struct{}{}:
+			default:
+			}
+		}
 	}
 	h.broadcastLocked(Frame{
 		Kind:    FrameOutput,
 		Seq:     h.record.StreamSeq,
 		Payload: chunk,
 	})
+}
+
+// pumpScreen coalesces PTY reads before copying changed cells out of Ghostty.
+func (h *Host) pumpScreen() {
+	ticker := time.NewTicker(screenInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-h.done:
+			return
+		case <-h.screenWake:
+		}
+		select {
+		case <-h.done:
+			return
+		case <-ticker.C:
+		}
+		h.mu.Lock()
+		h.flushScreenLocked(false)
+		h.persistScreenLocked(false)
+		h.mu.Unlock()
+	}
+}
+
+func (h *Host) flushScreenLocked(full bool) {
+	if len(h.observers) == 0 {
+		return
+	}
 	if state, ok := h.cfg.State.(interface{ RenderFrame(bool) ([]byte, error) }); ok {
-		if payload, err := state.RenderFrame(false); err == nil && len(payload) > 0 {
+		if payload, err := state.RenderFrame(full); err == nil && len(payload) > 0 {
 			h.broadcastLocked(Frame{Kind: FrameScreen, Seq: h.record.StreamSeq, Payload: payload})
 		}
 	}
@@ -645,6 +688,9 @@ func (h *Host) snapshotLocked() []byte {
 
 func (h *Host) broadcastLocked(frame Frame) {
 	for id, obs := range h.observers {
+		if frame.Kind == FrameOutput && obs.screenOnly {
+			continue
+		}
 		select {
 		case obs.out <- frame:
 		default:

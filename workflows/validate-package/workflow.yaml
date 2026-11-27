@@ -1,0 +1,15 @@
+schema: flows/v1
+id: validate-package
+version: 1.0.0
+inputs:
+  directory:
+    type: string
+    required: true
+nodes:
+  validate:
+    uses: core.command
+    with:
+      command: flows
+      args: [validate, "${{ inputs.directory }}", --json]
+outputs:
+  exit_code: ${{ nodes.validate.outputs.exit_code }}
