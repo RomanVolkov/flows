@@ -12,6 +12,14 @@ declare global {
 export async function request<T>(action:string, payload=''):Promise<T> {
   return JSON.parse(await window.go.main.App.Request(action,payload))
 }
+export interface LibraryEntry {
+  kind:string; id:string; version?:string; path:string; status?:'preparing'|'ready'|'invalid'
+  diagnostics?:{file:string; message:string; code:string}[]
+}
+export interface LibrarySnapshot {
+  entries:LibraryEntry[]|null
+  malformed?:LibraryEntry[]
+}
 export interface WorkflowField {
   name:string; type:string; required:boolean; default?:unknown
 }

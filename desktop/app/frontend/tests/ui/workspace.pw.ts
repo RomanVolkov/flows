@@ -179,3 +179,29 @@ test('refreshes the launcher when a selected workflow becomes stale', async ({ p
   await expect(workflow.getByRole('option')).toHaveText(['No ready workflows'])
   await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
 })
+
+test('shows invalid packages in Settings and clears resolved diagnostics', async ({ page, launch }) => {
+  await launch()
+  await page.evaluate(() => {
+    const app = window.go.main.App
+    const request = app.Request
+    let reads = 0
+    app.Request = async (action, payload) => {
+      if (action !== 'library') return request(action, payload)
+      if (++reads > 1) return JSON.stringify({ entries: [] })
+      return JSON.stringify({
+        entries: [{ id: 'broken-tool', kind: 'tool', status: 'invalid', path: '/tools/broken-tool',
+          diagnostics: [{ message: 'Go build failed' }] }],
+        malformed: [{ id: 'broken-workflow', kind: 'workflow', status: 'invalid', path: '/workflows/broken-workflow',
+          diagnostics: [{ message: 'Malformed workflow YAML' }] }],
+      })
+    }
+  })
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  await expect(settings.getByText('broken-tool')).toBeVisible()
+  await expect(settings.getByText('Go build failed')).toBeVisible()
+  await expect(settings.getByText('broken-workflow')).toBeVisible()
+  await expect(settings.getByText('Malformed workflow YAML')).toBeVisible()
+  await expect(settings.getByRole('list', { name: 'Package preparation' })).toHaveCount(0)
+})

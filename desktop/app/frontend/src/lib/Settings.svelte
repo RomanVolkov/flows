@@ -1,11 +1,19 @@
 <script lang="ts">
- import {request} from './workspace'
+ import {request, type LibraryEntry, type LibrarySnapshot} from './workspace'
  import {configureTerminal} from './theme'
  let {open=$bindable(false)}=$props()
  let value=$state<any>(), available=$state<{id:string;version:string}[]>([])
- let entries=$state<{kind:string;id:string;version:string;path:string}[]>([])
+ let entries=$state<LibraryEntry[]>([])
+ const packageIssues=$derived(entries.filter(entry=>entry.status==='invalid'||entry.status==='preparing'))
+ let libraryRefresh=0
  let error=$state(''), busy=$state(false)
- async function refreshLibrary(){try{const library=await request<{entries:{kind:string;id:string;version:string;path:string}[]}>('library');entries=library.entries??[]}catch(e){error=String(e)}}
+ async function refreshLibrary(){
+  const refresh=++libraryRefresh
+  try{
+   const library=await request<LibrarySnapshot>('library')
+   if(refresh===libraryRefresh)entries=[...(library.entries??[]),...(library.malformed??[])]
+  }catch(e){if(refresh===libraryRefresh)error=String(e)}
+ }
  async function load(){
   try{
    const [settings,harnesses]=await Promise.all([
@@ -23,7 +31,7 @@
    if (!open) return
    void load()
    const timer = window.setInterval(refreshLibrary, 2500)
-   return () => clearInterval(timer)
+   return () => {clearInterval(timer);libraryRefresh++}
  })
  function close(){open=false}
  function toggle(){open=!open}
@@ -40,6 +48,18 @@
  <h3 class="label next">Workflows and tools</h3><p class="hint">Changes in these folders are picked up by the library scan without restarting Flows.</p>
  <div class="library-row"><span>Workflows <span class="count mono">{count('workflow')}</span></span><button class="folder" onclick={()=>openFolder('workflows')}>Open folder</button></div>
  <div class="library-row"><span>Tools <span class="count mono">{count('tool')}</span></span><button class="folder" onclick={()=>openFolder('tools')}>Open folder</button></div>
+ {#if packageIssues.length}
+  <ul class="package-issues" aria-label="Package preparation">
+   {#each packageIssues as entry (entry.path)}
+    <li>
+     <span class="mono">{entry.id}</span> <span class="hint">{entry.kind} · {entry.status==='preparing'?'Preparing…':'Invalid'}</span>
+     {#if entry.diagnostics?.length}
+      <ul>{#each entry.diagnostics as diagnostic}<li class="error">{diagnostic.message}</li>{/each}</ul>
+     {/if}
+    </li>
+   {/each}
+  </ul>
+ {/if}
  {/if}
  {#if error}<p class="error mono">{error}</p>{/if}
 </div>{/if}</div>
@@ -54,5 +74,6 @@
 .hint{color:var(--text-3);font-size:12px;margin:4px 0 10px}.count{color:var(--text-3)}
 .tabs{display:flex;gap:4px;margin-top:8px}.tabs button{height:26px;padding:0 10px;flex:1;justify-content:center;white-space:nowrap;text-transform:none;letter-spacing:0}.tabs button.on{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,var(--border))}.next{margin-top:16px}
 .library-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;color:var(--text-2)}.count{margin-left:6px}.folder{font-size:11px;padding:4px 8px}.error{color:var(--danger);overflow-wrap:anywhere}
+.package-issues{padding-left:18px;max-height:220px;overflow:auto}.package-issues ul{padding-left:16px}.package-issues li{margin:5px 0}
 .opacity{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;margin-top:8px;color:var(--text-2);font-size:12px}.opacity input{grid-column:1/-1;width:100%;accent-color:var(--accent)}
 </style>
