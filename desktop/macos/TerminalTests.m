@@ -351,19 +351,20 @@ static int gRunStatus = 0;
                         BOOL moved = (m.finalScrolledRows > m.initialScrolledRows) &&
                                      [startVp containsString:readyMarker] &&
                                      ![endVp containsString:readyMarker];
+                        BOOL perfPass = moved && (m.submissionRateHz >= 55.0) && (m.submissionP95GapMs > 0.0) && (m.submissionP95GapMs < 33.4);
                         fprintf(stdout,
                             "BENCHMARK_RESULT duration_ms=%.1f scroll_events=%ld submissions=%lu "
                             "submission_rate_hz=%.2f p50_gap_ms=%.2f p95_gap_ms=%.2f max_gap_ms=%.2f "
                             "missed_33_4ms=%lu display_link_callbacks=%lu display_link_hz=%.2f "
                             "display_link_p95_ms=%.2f metal_layer=%d scrollbar_updates=%lu "
-                            "distinct_offsets=%lu initial_scrolled=%llu final_scrolled=%llu history_moved=%d\n",
+                            "distinct_offsets=%lu initial_scrolled=%llu final_scrolled=%llu history_moved=%d gate_pass=%d\n",
                             m.durationMs, (long)ticksSent, (unsigned long)m.renderSubmissions,
                             m.submissionRateHz, m.submissionP50GapMs, m.submissionP95GapMs, m.submissionMaxGapMs,
                             (unsigned long)m.missed33_4ms, (unsigned long)m.displayLinkCallbacks, m.displayLinkRateHz,
                             m.displayLinkP95GapMs, m.metalLayerAttached ? 1 : 0, (unsigned long)m.scrollbarUpdates,
                             (unsigned long)m.distinctScrollbarOffsets, m.initialScrolledRows, m.finalScrolledRows,
-                            moved ? 1 : 0);
-                        [self finishWithStatus:(moved ? 0 : 1)];
+                            moved ? 1 : 0, perfPass ? 1 : 0);
+                        [self finishWithStatus:(perfPass ? 0 : 1)];
                     });
                 }
             }];
