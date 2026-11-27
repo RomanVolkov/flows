@@ -1,6 +1,6 @@
 cask "flows" do
-  version "1.0.0"
-  sha256 "e31990eaadb3adf485d9a17c1ec02fe36a404ffebf18e191f0d306dac6509c6a"
+  version "1.1.0"
+  sha256 "c2f5b7795cfea0efd85b37f332a18dbf6b095444e1b4be5e6c896d269e2db49d"
 
   url "https://github.com/RomanVolkov/flows/releases/download/v#{version}/Flows-#{version}-darwin-arm64.pkg"
   name "Flows"
