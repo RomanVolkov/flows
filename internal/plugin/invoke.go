@@ -40,6 +40,7 @@ type InvokeConfig struct {
 	Timeout        time.Duration
 	MaxOutputBytes int
 	OnProgress     func(percent float64, message string)
+	OnMilestone    func(string) error
 }
 
 // InvokeResult holds the typed output, optional watch observation, and stderr diagnostics.
@@ -225,6 +226,14 @@ func Invoke(ctx context.Context, cfg InvokeConfig) (InvokeResult, error) {
 		case "progress":
 			if cfg.OnProgress != nil {
 				cfg.OnProgress(frame.Percent, frame.Message)
+			}
+		case "milestone":
+			if cfg.OnMilestone != nil {
+				if err := cfg.OnMilestone(frame.Message); err != nil {
+					_ = syscall.Kill(-pgid, syscall.SIGKILL)
+					_ = cmd.Wait()
+					return result, err
+				}
 			}
 		case "result":
 			result.Output = frame.Output

@@ -35,6 +35,11 @@ func (c InvokeContext) Progress(percent float64, message string) {
 	})
 }
 
+// Milestone publishes a named intermediate outcome before the operation returns.
+func (c InvokeContext) Milestone(name string) {
+	c.send(Frame{Protocol: ProtocolVersion, RequestID: c.RequestID, Kind: "milestone", Message: name})
+}
+
 // Log writes diagnostic text to stderr, separate from typed stdout frames.
 func (c InvokeContext) Log(format string, args ...any) {
 	if c.stderr != nil {

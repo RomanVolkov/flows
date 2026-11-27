@@ -121,7 +121,7 @@ func (w *libraryReconciler) reconcile(ctx context.Context) {
 		}
 		def, diags := workflow.ParseFile(filepath.Join(entry.Path, "workflow.yaml"))
 		if len(diags) == 0 {
-			_, diags = workflow.Compile(def, reg, libraryWorkflowLoader(entry.Path, workflows))
+			_, diags = workflow.CompileWithLoader(def, reg, libraryWorkflowLoader(workflows))
 		}
 		entry.Status = "ready"
 		if len(diags) > 0 {
@@ -155,8 +155,8 @@ func setPreparation(entry *library.IndexEntry, code string, err error) {
 	}
 }
 
-func libraryWorkflowLoader(root string, entries map[string]library.IndexEntry) workflow.WorkflowLoader {
-	return func(ref string) (*workflow.Definition, error) {
+func libraryWorkflowLoader(entries map[string]library.IndexEntry) workflow.RelativeWorkflowLoader {
+	return func(parent *workflow.Definition, ref string) (*workflow.Definition, error) {
 		path := ""
 		if entry, ok := entries[ref]; ok {
 			path = filepath.Join(entry.Path, "workflow.yaml")
@@ -164,7 +164,7 @@ func libraryWorkflowLoader(root string, entries map[string]library.IndexEntry) w
 			if !filepath.IsLocal(ref) {
 				return nil, fmt.Errorf("invalid workflow reference %q", ref)
 			}
-			path = filepath.Join(root, ref)
+			path = filepath.Join(filepath.Dir(parent.File), ref)
 			if filepath.Ext(path) == "" {
 				path = filepath.Join(path, "workflow.yaml")
 			}

@@ -21,12 +21,12 @@ type Manifest struct {
 
 // Operation describes one callable plugin operation.
 type Operation struct {
-	ID            string          `json:"id"`
-	Description   string          `json:"description"`
-	ReadOnly      bool            `json:"read_only,omitempty"`
-	InputSchema   json.RawMessage `json:"input_schema,omitempty"`
-	OutputSchema  json.RawMessage `json:"output_schema,omitempty"`
-	Milestones    []string        `json:"milestones,omitempty"`
+	ID           string          `json:"id"`
+	Description  string          `json:"description"`
+	ReadOnly     bool            `json:"read_only,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Milestones   []string        `json:"milestones,omitempty"`
 }
 
 // Request is sent from the engine to the plugin over stdin.
@@ -62,7 +62,7 @@ type Observation struct {
 type Frame struct {
 	Protocol    int             `json:"protocol"`
 	RequestID   string          `json:"request_id"`
-	Kind        string          `json:"kind"` // "manifest" | "progress" | "result" | "observation" | "error"
+	Kind        string          `json:"kind"` // "manifest" | "progress" | "milestone" | "result" | "observation" | "error"
 	Message     string          `json:"message,omitempty"`
 	Percent     float64         `json:"percent,omitempty"`
 	Output      json.RawMessage `json:"output,omitempty"`

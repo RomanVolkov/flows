@@ -4,16 +4,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
 // BindContext holds resolved runtime values for expression evaluation.
 type BindContext struct {
-	Inputs      map[string]any
-	NodeOutputs map[string]map[string]any
-	Artifacts   map[string]string
-	Item        any
-	Secrets     []string
+	Inputs         map[string]any
+	NodeOutputs    map[string]map[string]any
+	FanOutOutputs  map[string][]map[string]any
+	CurrentOutputs map[string]any
+	Artifacts      map[string]string
+	Item           any
+	Secrets        []string
 }
 
 // ResolveInputs validates required inputs, applies defaults, and checks types.
@@ -119,6 +122,13 @@ func EvalExpr(expr string, ctx BindContext) (any, error) {
 		return nil, fmt.Errorf("empty expression")
 	}
 	switch parts[0] {
+	case "true", "false":
+		if len(parts) == 1 {
+			return parts[0] == "true", nil
+		}
+		return nil, fmt.Errorf("invalid boolean binding %q", expr)
+	case "outputs":
+		return traversePath(ctx.CurrentOutputs, parts[1:], expr)
 	case "inputs":
 		if len(parts) < 2 {
 			return nil, fmt.Errorf("incomplete inputs binding %q", expr)
@@ -146,6 +156,9 @@ func EvalExpr(expr string, ctx BindContext) (any, error) {
 		if len(parts) < 3 || parts[2] != "outputs" {
 			return nil, fmt.Errorf("invalid node output binding %q", expr)
 		}
+		if items, ok := ctx.FanOutOutputs[parts[1]]; ok {
+			return traversePath(items, parts[3:], expr)
+		}
 		nodeOut, ok := ctx.NodeOutputs[parts[1]]
 		if !ok {
 			return nil, fmt.Errorf("missing outputs for node %q", parts[1])
@@ -161,6 +174,14 @@ func EvalExpr(expr string, ctx BindContext) (any, error) {
 
 func traversePath(cur any, rest []string, fullExpr string) (any, error) {
 	for _, seg := range rest {
+		if rows, ok := cur.([]map[string]any); ok {
+			index, err := strconv.Atoi(seg)
+			if err != nil || index < 0 || index >= len(rows) {
+				return nil, fmt.Errorf("invalid item index %q in %q", seg, fullExpr)
+			}
+			cur = rows[index]
+			continue
+		}
 		m, ok := cur.(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("cannot traverse %q in %q (not an object)", seg, fullExpr)

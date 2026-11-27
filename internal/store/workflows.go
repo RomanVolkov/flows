@@ -19,6 +19,10 @@ type WorkflowRun struct {
 }
 
 type WorkflowStep struct {
+	Key                                          string
+	Label                                        string
+	Item                                         json.RawMessage
+	Iteration                                    int
 	NodeID, StepID, Kind                         string
 	ToolID, CacheKey, BinaryDigest, InvocationID string
 }
@@ -82,41 +86,97 @@ func (s *Store) CreateWorkflowRun(ctx context.Context, spec NewWorkflowRun) (Wor
 			string(spec.Inputs), string(spec.Snapshot), run.Status, tx.now, tx.now); err != nil {
 			return err
 		}
-		waiting := make(map[string]string)
-		for _, edge := range spec.Edges {
-			waiting[edge.To] = edge.From
-		}
-		for _, step := range spec.Steps {
-			node := Node{ID: step.NodeID, RunID: run.RunID, ParentID: &run.NodeID, Kind: step.Kind, Name: step.StepID, Status: Ready}
-			if dep := waiting[step.StepID]; dep != "" {
-				node.Status, node.Wait = WaitingForDependencies, &WaitReason{Kind: "edge", Ref: dep}
-			}
-			if err := tx.insertWorkflowNode(ctx, node); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO workflow_steps(node_id,run_id,parent_node_id,step_key,step_id,node_type,pinned_tool_id,pinned_cache_key,pinned_binary_digest,invocation_id,created_at,updated_at)
-				VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, node.ID, run.RunID, run.NodeID, step.StepID, step.StepID, step.Kind, step.ToolID,
-				step.CacheKey, step.BinaryDigest, step.InvocationID, tx.now, tx.now); err != nil {
-				return err
-			}
-		}
-		ids := make(map[string]string, len(spec.Steps))
-		for _, step := range spec.Steps {
-			ids[step.StepID] = step.NodeID
-		}
-		for _, dependency := range spec.Edges {
-			edge := Edge{ID: rand.Text(), RunID: run.RunID, FromID: ids[dependency.From], ToID: ids[dependency.To], Milestone: dependency.Milestone}
-			if _, err := tx.ExecContext(ctx, "INSERT INTO edges(id,run_id,from_id,to_id,milestone) VALUES(?,?,?,?,?)", edge.ID, run.RunID, edge.FromID, edge.ToID, edge.Milestone); err != nil {
-				return err
-			}
-			if err := tx.event(ctx, run.RunID, &edge.ToID, nil, "edge_added", edge); err != nil {
-				return err
-			}
+		if err := tx.addWorkflowSteps(ctx, run.RunID, run.NodeID, spec.Steps, spec.Edges); err != nil {
+			return err
 		}
 		created = true
 		return tx.advanceGraph(ctx, run.RunID)
 	})
 	return run, created && err == nil, err
+}
+
+func (s *Store) AddWorkflowSteps(ctx context.Context, runID, parent string, steps []WorkflowStep, edges []WorkflowEdge) error {
+	return s.write(ctx, func(tx *writeTx) error {
+		if err := tx.addWorkflowSteps(ctx, runID, parent, steps, edges); err != nil {
+			return err
+		}
+		return tx.advanceGraph(ctx, runID)
+	})
+}
+
+func nullableJSON(data json.RawMessage) any {
+	if len(data) == 0 {
+		return nil
+	}
+	return string(data)
+}
+
+func (tx *writeTx) addWorkflowSteps(ctx context.Context, runID, parent string, steps []WorkflowStep, edges []WorkflowEdge) error {
+	waiting := make(map[string]string)
+	for _, edge := range edges {
+		waiting[edge.To] = edge.From
+	}
+	for _, step := range steps {
+		if step.Key == "" {
+			step.Key = step.StepID
+		}
+		if step.Label == "" {
+			step.Label = step.StepID
+		}
+		node := Node{ID: step.NodeID, RunID: runID, ParentID: &parent, Kind: step.Kind, Name: step.Label, Status: Ready}
+		if dep := waiting[step.StepID]; dep != "" {
+			node.Status, node.Wait = WaitingForDependencies, &WaitReason{Kind: "edge", Ref: dep}
+		}
+		if err := tx.insertWorkflowNode(ctx, node); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO workflow_steps(node_id,run_id,parent_node_id,step_key,step_id,node_type,pinned_tool_id,pinned_cache_key,pinned_binary_digest,invocation_id,item_json,iteration,created_at,updated_at)
+				VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, node.ID, runID, parent, step.Key, step.StepID, step.Kind, step.ToolID,
+			step.CacheKey, step.BinaryDigest, step.InvocationID, nullableJSON(step.Item), step.Iteration, tx.now, tx.now); err != nil {
+			return err
+		}
+	}
+	ids := make(map[string]string, len(steps))
+	for _, step := range steps {
+		ids[step.StepID] = step.NodeID
+	}
+	for _, dependency := range edges {
+		edge := Edge{ID: rand.Text(), RunID: runID, FromID: ids[dependency.From], ToID: ids[dependency.To], Milestone: dependency.Milestone}
+		if _, err := tx.ExecContext(ctx, "INSERT INTO edges(id,run_id,from_id,to_id,milestone) VALUES(?,?,?,?,?)", edge.ID, runID, edge.FromID, edge.ToID, edge.Milestone); err != nil {
+			return err
+		}
+		if err := tx.event(ctx, runID, &edge.ToID, nil, "edge_added", edge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) RecordWorkflowMilestone(ctx context.Context, nodeID, attemptID, name string) error {
+	return s.write(ctx, func(tx *writeTx) error {
+		node, err := readNode(ctx, tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if node.Status != Running || node.AttemptID == nil || *node.AttemptID != attemptID {
+			return ErrTransition
+		}
+		result, err := tx.ExecContext(ctx, "INSERT INTO milestones(attempt_id,name,reached_at) VALUES(?,?,?) ON CONFLICT DO NOTHING", attemptID, name, tx.now)
+		if err != nil {
+			return err
+		}
+		if count, err := result.RowsAffected(); err == nil && count == 0 {
+			return nil
+		}
+		return tx.event(ctx, node.RunID, &nodeID, &attemptID, "milestone_reached", map[string]string{"name": name})
+	})
+}
+
+func (s *Store) WorkflowMilestoneReached(ctx context.Context, nodeID, name string) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM milestones m JOIN nodes n ON n.active_attempt_id=m.attempt_id
+		WHERE n.id=? AND m.name=?)`, nodeID, name).Scan(&exists)
+	return exists, err
 }
 
 func (tx *writeTx) insertWorkflowNode(ctx context.Context, node Node) error {

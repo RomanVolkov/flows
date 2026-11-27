@@ -55,8 +55,22 @@ type CompiledWorkflow struct {
 // WorkflowLoader resolves nested workflow IDs or relative paths for recursion and type checks.
 type WorkflowLoader func(ref string) (*Definition, error)
 
+// RelativeWorkflowLoader resolves a reference in the context of its declaring workflow.
+type RelativeWorkflowLoader func(parent *Definition, ref string) (*Definition, error)
+
+func relativeLoader(loader WorkflowLoader) RelativeWorkflowLoader {
+	if loader == nil {
+		return nil
+	}
+	return func(_ *Definition, ref string) (*Definition, error) { return loader(ref) }
+}
+
 // Compile runs parse (if needed), TypeCheck, and ResolveCatalog in sequence.
 func Compile(def *Definition, reg *catalog.Registry, loader WorkflowLoader) (*CompiledWorkflow, []Diagnostic) {
+	return CompileWithLoader(def, reg, relativeLoader(loader))
+}
+
+func CompileWithLoader(def *Definition, reg *catalog.Registry, loader RelativeWorkflowLoader) (*CompiledWorkflow, []Diagnostic) {
 	if def == nil {
 		return nil, []Diagnostic{{Code: "nil_definition", Message: "definition is nil", Severity: "error"}}
 	}
@@ -64,7 +78,7 @@ func Compile(def *Definition, reg *catalog.Registry, loader WorkflowLoader) (*Co
 	if len(diags) > 0 {
 		return nil, diags
 	}
-	catDiags := ResolveCatalog(cw, reg, loader, []string{def.ID})
+	catDiags := resolveCatalog(cw, reg, loader, []string{def.ID})
 	if len(catDiags) > 0 {
 		return nil, catDiags
 	}
@@ -256,6 +270,10 @@ func TypeCheck(def *Definition) (*CompiledWorkflow, []Diagnostic) {
 
 // ResolveCatalog checks operations against reg and nested workflows against loader.
 func ResolveCatalog(cw *CompiledWorkflow, reg *catalog.Registry, loader WorkflowLoader, stack []string) []Diagnostic {
+	return resolveCatalog(cw, reg, relativeLoader(loader), stack)
+}
+
+func resolveCatalog(cw *CompiledWorkflow, reg *catalog.Registry, loader RelativeWorkflowLoader, stack []string) []Diagnostic {
 	var diags []Diagnostic
 	def := cw.Definition
 	addErr := func(field, code, msg string) {
@@ -291,7 +309,7 @@ func ResolveCatalog(cw *CompiledWorkflow, reg *catalog.Registry, loader Workflow
 				addErr(prefix+".workflow", "unknown_workflow", fmt.Sprintf("nested workflow %q cannot be resolved", ns.Workflow))
 				continue
 			}
-			childDef, err := loader(ns.Workflow)
+			childDef, err := loader(def, ns.Workflow)
 			if err != nil {
 				addErr(prefix+".workflow", "unknown_workflow", err.Error())
 				continue
@@ -307,7 +325,7 @@ func ResolveCatalog(cw *CompiledWorkflow, reg *catalog.Registry, loader Workflow
 				diags = append(diags, childDiags...)
 				continue
 			}
-			diags = append(diags, ResolveCatalog(childCW, reg, loader, append(stack, childDef.ID))...)
+			diags = append(diags, resolveCatalog(childCW, reg, loader, append(stack, childDef.ID))...)
 		}
 	}
 	return diags

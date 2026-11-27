@@ -45,8 +45,8 @@ func Validate(home paths.Home, dir string) ValidationReport {
 		if snap, scanErr := Scan(home, nil); scanErr == nil {
 			_ = PublishTools(snap, reg, map[string]bool{})
 		}
-		loader := func(ref string) (*workflow.Definition, error) {
-			target := filepath.Join(filepath.Dir(def.File), ref)
+		loader := func(parent *workflow.Definition, ref string) (*workflow.Definition, error) {
+			target := filepath.Join(filepath.Dir(parent.File), ref)
 			if filepath.Ext(target) == "" {
 				target = filepath.Join(target, "workflow.yaml")
 			}
@@ -56,7 +56,7 @@ func Validate(home paths.Home, dir string) ValidationReport {
 			}
 			return sub, nil
 		}
-		_, report.Diagnostics = workflow.Compile(def, reg, loader)
+		_, report.Diagnostics = workflow.CompileWithLoader(def, reg, loader)
 		report.Valid = len(report.Diagnostics) == 0
 		return report
 	}

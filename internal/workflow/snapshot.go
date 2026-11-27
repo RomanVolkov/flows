@@ -15,7 +15,14 @@ import (
 
 // LaunchSnapshot pins a compiled workflow, its templates, resolved result schemas
 // (including transitive local $refs), child definitions, and operation versions.
+type ToolBuildPin struct {
+	ToolID       string `json:"tool_id"`
+	CacheKey     string `json:"cache_key"`
+	BinaryDigest string `json:"binary_digest"`
+}
+
 type LaunchSnapshot struct {
+	ToolBuilds        map[string]ToolBuildPin    `json:"tool_builds,omitempty"`
 	DefinitionID      string                     `json:"definition_id"`
 	Version           string                     `json:"version"`
 	Digest            string                     `json:"digest"`
@@ -29,6 +36,10 @@ type LaunchSnapshot struct {
 // CreateSnapshot captures all templates, transitive local schemas, child workflows,
 // and catalog operation versions at launch time so later disk edits do not affect the run.
 func CreateSnapshot(pkgDir string, cw *CompiledWorkflow, reg *catalog.Registry, loader WorkflowLoader) (*LaunchSnapshot, error) {
+	return CreateSnapshotWithLoader(pkgDir, cw, reg, relativeLoader(loader))
+}
+
+func CreateSnapshotWithLoader(pkgDir string, cw *CompiledWorkflow, reg *catalog.Registry, loader RelativeWorkflowLoader) (*LaunchSnapshot, error) {
 	if cw == nil || cw.Definition == nil {
 		return nil, fmt.Errorf("compiled workflow is nil")
 	}
@@ -74,16 +85,16 @@ func CreateSnapshot(pkgDir string, cw *CompiledWorkflow, reg *catalog.Registry, 
 		}
 
 		if ns.Workflow != "" && loader != nil {
-			childDef, err := loader(ns.Workflow)
+			childDef, err := loader(cw.Definition, ns.Workflow)
 			if err != nil {
 				return nil, fmt.Errorf("load child workflow %q: %w", ns.Workflow, err)
 			}
-			childCW, diags := Compile(childDef, reg, loader)
+			childCW, diags := CompileWithLoader(childDef, reg, loader)
 			if len(diags) > 0 {
 				return nil, diags[0]
 			}
 			childPkgDir := filepath.Dir(childDef.File)
-			childSnap, err := CreateSnapshot(childPkgDir, childCW, reg, loader)
+			childSnap, err := CreateSnapshotWithLoader(childPkgDir, childCW, reg, loader)
 			if err != nil {
 				return nil, err
 			}
