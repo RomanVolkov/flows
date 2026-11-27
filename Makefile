@@ -59,9 +59,15 @@ uninstall:
 	@rm -f "$${HOME}/Library/LaunchAgents/dev.flows.daemon.plist"
 	@rm -rf "$${HOME}/Applications/Flows.app" "$${HOME}/.local/bin/flows"
 
+.PHONY: ui-check
+ui-check: desktop-fonts $(FRONTEND)/node_modules/.package-lock.json
+	@npm --prefix $(FRONTEND) run build
+	@npm --prefix $(FRONTEND) run test:ui
+
 desktop-check: desktop
 	@npm --prefix $(FRONTEND) run check
 	@npm --prefix $(FRONTEND) test
+	@npm --prefix $(FRONTEND) run test:ui
 	@$(GO) test ./desktop/...
 
 integration:

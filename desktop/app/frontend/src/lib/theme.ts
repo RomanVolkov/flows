@@ -14,7 +14,6 @@ const palette=Object.fromEntries(['black','red','green','yellow','blue','magenta
 export const terminalThemeFor=(t:Theme)=>({background:rgba(c.bg,t.background_opacity??0.9), foreground:c.fg, cursor:c.cursor,
   selectionBackground:c.selection_bg, selectionForeground:c.selection_fg,
   ...palette})
-export const terminalTheme=terminalThemeFor(get(theme))
 export function configureTerminal(prefs:{font_family:string;font_size:number;opacity:number;blur?:boolean}){
   const family=prefs.font_family==='Iosevka Mono'?'IosevkaTerm Nerd Font Mono':prefs.font_family
   theme.update(themeValue=>({...themeValue,font_family:family||'IosevkaTerm Nerd Font Mono',font_size:prefs.font_size||19,background_opacity:prefs.opacity??0.9,blur:prefs.blur??true}))

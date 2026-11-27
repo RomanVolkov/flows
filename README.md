@@ -34,6 +34,8 @@ Pushing a stable `vMAJOR.MINOR.PATCH` tag builds and smoke-tests the installer, 
    make package install
    ```
 
+Run `make ui-check` for the WebKit UI tests alone. They load the production frontend with a mocked Wails bridge. Fixtures and interaction tests live in `desktop/app/frontend/tests/ui`. The first run downloads the test browser.
+
 ## CLI & Build Targets
 
 - `flows`: `version`, `status`, `shutdown`, `validate <workflow.yaml>`, `spec {path|show [authoring|protocol|workflow|tool]}`
