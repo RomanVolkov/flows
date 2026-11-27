@@ -102,6 +102,7 @@ case "$product" in
             (
                 cd "$scratch/source"
                 "$scratch/compiler/zig" build -Doptimize=ReleaseFast \
+                    -Dversion-string="$GHOSTTY_VERSION" \
                     -Dapp-runtime=none -Demit-xcframework=true -Dxcframework-target=native \
                     -Demit-macos-app=false --prefix "$scratch/output"
             )
