@@ -4,15 +4,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
+	"strconv"
 	"syscall"
+	"time"
 
+	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/terminal"
 )
 
@@ -23,6 +25,13 @@ func main() {
 	}
 }
 
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func run(args []string) error {
 	if len(args) >= 3 && args[0] == "host" {
 		state, err := terminal.NewGhosttyState()
@@ -30,27 +39,107 @@ func run(args []string) error {
 			return err
 		}
 		defer state.Close()
+
+		stateDir := os.Getenv("FLOWS_PROBE_STATE_DIR")
+		if stateDir == "" {
+			tmpDir, err := os.MkdirTemp("", "flows-probe-host-*")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmpDir)
+			stateDir = tmpDir
+		}
+
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		cmd := exec.Command(args[2], args[3:]...)
-		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-		return terminal.Serve(ctx, args[1], cmd, state)
+
+		h, err := host.Start(ctx, host.Config{
+			SessionID:  envOr("FLOWS_PROBE_SESSION", "probe"),
+			AttemptID:  envOr("FLOWS_PROBE_ATTEMPT", "att-probe"),
+			StateDir:   stateDir,
+			SocketPath: args[1],
+			Command:    args[2],
+			Args:       args[3:],
+			State:      state,
+		})
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+
+		if err := h.WaitCheckoutReady(ctx); err != nil {
+			return err
+		}
+		rec := h.Wait()
+		if rec.ExitCode != nil && *rec.ExitCode != 0 {
+			return fmt.Errorf("probe session exited with code %d", *rec.ExitCode)
+		}
+		return nil
 	}
-	if len(args) == 2 && args[0] == "attach" {
-		return terminal.Attach(args[1], os.Stdin, os.Stdout)
+	if len(args) >= 2 && args[0] == "attach" {
+		sessionID := envOr("FLOWS_PROBE_SESSION", "probe")
+		if len(args) >= 3 {
+			sessionID = args[2]
+		}
+		var epoch uint64
+		if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
+			epoch, _ = strconv.ParseUint(raw, 10, 64)
+		}
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer cancel()
+		return host.AttachNative(ctx, args[1], sessionID, os.Stdin, os.Stdout, host.NativeAttachOptions{
+			ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
+			Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
+			Epoch:         epoch,
+			ControlSocket: os.Getenv("FLOWS_ATTACH_CTL"),
+		})
 	}
-	if len(args) == 2 && args[0] == "window" {
+	if len(args) >= 3 && args[0] == "scroll" {
+		rows, err := strconv.Atoi(args[2])
+		if err != nil {
+			return fmt.Errorf("invalid scroll rows %q: %w", args[2], err)
+		}
+		sessionID := envOr("FLOWS_PROBE_SESSION", "probe")
+		if len(args) >= 4 {
+			sessionID = args[3]
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		conn, err := host.DialAttach(ctx, args[1], sessionID, host.AttachOptions{ScreenOnly: true})
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		for {
+			f, err := conn.ReadFrame(ctx)
+			if err != nil {
+				return err
+			}
+			if f.Kind == host.FrameControl {
+				var ctrl host.ControlMessage
+				if json.Unmarshal(f.Payload, &ctrl) == nil && ctrl.Type == "replay_end" {
+					break
+				}
+			}
+		}
+		if err := conn.SendControl(ctx, host.ControlMessage{Type: "scroll", Rows: rows}); err != nil {
+			return err
+		}
+		// Wait briefly for the host to apply and flush the updated screen before detaching.
+		_, _ = conn.ReadFrame(ctx)
+		return nil
+	}
+	if len(args) >= 2 && args[0] == "window" {
 		exe, err := os.Executable()
 		if err != nil {
 			return err
 		}
+		sessionID := envOr("FLOWS_PROBE_SESSION", "probe")
+		if len(args) >= 3 {
+			sessionID = args[2]
+		}
 		app := filepath.Join(filepath.Dir(exe), "flows-terminal-window")
-		relay := shellQuote(exe) + " attach " + shellQuote(args[1])
-		return syscall.Exec(app, []string{app, relay}, os.Environ())
+		return syscall.Exec(app, []string{app, exe, args[1], sessionID}, os.Environ())
 	}
-	return errors.New("usage: flows-terminal-probe host SOCKET COMMAND [ARGS...] | window SOCKET | attach SOCKET")
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+	return errors.New("usage: flows-terminal-probe host SOCKET COMMAND [ARGS...] | window SOCKET [SESSION] | attach SOCKET [SESSION] | scroll SOCKET ROWS [SESSION]")
 }

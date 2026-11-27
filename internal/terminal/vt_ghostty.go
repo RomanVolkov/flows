@@ -180,6 +180,22 @@ static void scroll_vt(flows_vt *vt, int32_t delta) {
 	ghostty_terminal_scroll_viewport(vt->terminal, behavior);
 }
 
+static uint64_t scrolled_rows_vt(flows_vt *vt) {
+	GhosttyTerminalScrollbar scrollbar = {0};
+	if (ghostty_terminal_get(vt->terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, &scrollbar) != GHOSTTY_SUCCESS) {
+		return 0;
+	}
+	return scrollbar.total > scrollbar.offset + scrollbar.len ? scrollbar.total - scrollbar.offset - scrollbar.len : 0;
+}
+
+static void set_scrolled_rows_vt(flows_vt *vt, int32_t rows_from_bottom) {
+	GhosttyTerminalScrollViewport bottom = {.tag = GHOSTTY_SCROLL_VIEWPORT_BOTTOM};
+	ghostty_terminal_scroll_viewport(vt->terminal, bottom);
+	if (rows_from_bottom > 0) {
+		scroll_vt(vt, -rows_from_bottom);
+	}
+}
+
 static void close_vt(flows_vt *vt) {
 	ghostty_render_state_row_cells_free(vt->cells);
 	ghostty_render_state_row_iterator_free(vt->rows);
@@ -291,6 +307,20 @@ func (s *GhosttyState) Scroll(rows int) (bool, error) {
 	}
 	C.scroll_vt(s.vt, C.int32_t(rows))
 	return true, nil
+}
+
+// ScrolledRows reports how many rows the viewport is scrolled back from the bottom.
+func (s *GhosttyState) ScrolledRows() int {
+	return int(C.scrolled_rows_vt(s.vt))
+}
+
+// SetScrolledRows positions the viewport rowsFromBottom lines above the live bottom.
+func (s *GhosttyState) SetScrolledRows(rowsFromBottom int) error {
+	if rowsFromBottom < 0 {
+		rowsFromBottom = 0
+	}
+	C.set_scrolled_rows_vt(s.vt, C.int32_t(rowsFromBottom))
+	return nil
 }
 
 func (s *GhosttyState) Replay() ([]byte, error) {

@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -285,7 +286,7 @@ func TestAttachTTYFullScreenAndExitBeforeAttach(t *testing.T) {
 		StateDir:   t.TempDir(),
 		SocketPath: sock1,
 		Command:    "/bin/sh",
-		Args:       []string{"-c", "printf '\\033[?1049hFULLSCREEN\\033[?1049l'; exit 0"},
+		Args:       []string{"-c", "printf '\\033[?1049hFULLSCREEN'; IFS= read -r _; printf '\\033[?1049l'; exit 0"},
 	})
 	if err != nil {
 		t.Fatalf("Start h1: %v", err)
@@ -326,15 +327,20 @@ func TestAttachTTYFullScreenAndExitBeforeAttach(t *testing.T) {
 		}
 	}()
 
-	if err := AttachTTY(ctx, sock1, "sess-tty", slave, slave); err != nil {
-		t.Fatalf("AttachTTY: %v", err)
-	}
+	attachDone := make(chan error, 1)
+	go func() {
+		attachDone <- AttachTTY(ctx, sock1, "sess-tty", slave, slave)
+	}()
 	select {
 	case <-gotScreen:
+		_, _ = master.Write([]byte("\n"))
 	case <-time.After(2 * time.Second):
 		outMu.Lock()
 		t.Fatalf("expected FULLSCREEN in AttachTTY output, got %q", ttyOut.String())
 		outMu.Unlock()
+	}
+	if err := <-attachDone; err != nil {
+		t.Fatalf("AttachTTY: %v", err)
 	}
 
 	// Part 2: Terminal exits BEFORE first attachment.
@@ -489,5 +495,362 @@ func TestScreenPumpCoalescesOutputForCanvasClients(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("screen pump failed to flush pending output")
 		}
+	}
+}
+
+type fakeSnapshotState struct {
+	mu           sync.Mutex
+	buf          bytes.Buffer
+	scrolled     int
+	snapshotData []byte
+	snapshotErr  error
+	replayErr    error
+}
+
+func (s *fakeSnapshotState) Feed(data []byte, _ *os.File) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.buf.Write(data)
+}
+
+func (s *fakeSnapshotState) Resize(pty.Winsize) error { return nil }
+
+func (s *fakeSnapshotState) Replay() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.replayErr != nil {
+		return nil, s.replayErr
+	}
+	return append([]byte(nil), s.buf.Bytes()...), nil
+}
+
+func (s *fakeSnapshotState) SnapshotFrame() ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]byte(nil), s.snapshotData...), s.snapshotErr
+}
+
+func (s *fakeSnapshotState) ScrolledRows() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.scrolled
+}
+
+func (s *fakeSnapshotState) SetScrolledRows(rows int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rows < 0 {
+		rows = 0
+	}
+	s.scrolled = rows
+	return nil
+}
+
+func TestRawAndFallbackReplayWithScrolledAndMalformedSnapshots(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	state := &fakeSnapshotState{
+		scrolled:     17,
+		snapshotData: []byte(`{"full":true,"cols":80,"rows":24,"fg":1,"bg":0,"cursor":{"x":0,"y":0,"visible":true,"style":"block"},"lines":[]}`),
+	}
+	sock := testSocketPath(t)
+	h, err := Start(ctx, Config{
+		SessionID:  "sess-replay-modes",
+		AttemptID:  "att-replay-modes",
+		StateDir:   t.TempDir(),
+		SocketPath: sock,
+		Command:    "/bin/sh",
+		Args:       []string{"-c", "echo REPLAY_LINE; sleep 2"},
+		State:      state,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		_ = h.RequestStop(200 * time.Millisecond)
+		_ = h.Close()
+	}()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if h.Record().StreamSeq > 0 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// 1. Raw attach (ScreenOnly=false) must receive FrameOutput and scrolled Rows in replay_end, NOT FrameScreen.
+	rawClient, err := DialAttach(ctx, sock, "sess-replay-modes", AttachOptions{ClientID: "raw-1"})
+	if err != nil {
+		t.Fatalf("DialAttach raw: %v", err)
+	}
+	var gotOutput bytes.Buffer
+	var gotReplayEnd ControlMessage
+	for {
+		f, err := rawClient.ReadFrame(ctx)
+		if err != nil {
+			t.Fatalf("raw ReadFrame: %v", err)
+		}
+		if f.Kind == FrameScreen {
+			t.Fatalf("raw attach unexpectedly received FrameScreen")
+		}
+		if f.Kind == FrameOutput {
+			gotOutput.Write(f.Payload)
+		}
+		if f.Kind == FrameControl {
+			var ctrl ControlMessage
+			if json.Unmarshal(f.Payload, &ctrl) == nil && ctrl.Type == "replay_end" {
+				gotReplayEnd = ctrl
+				break
+			}
+		}
+	}
+	rawClient.Close()
+	if !strings.Contains(gotOutput.String(), "REPLAY_LINE") {
+		t.Fatalf("raw replay missing REPLAY_LINE, got %q", gotOutput.String())
+	}
+	if gotReplayEnd.Rows != 17 {
+		t.Fatalf("replay_end rows = %d, want 17", gotReplayEnd.Rows)
+	}
+
+	// 2. ScreenOnly attach with malformed snapshot JSON must fall back to FrameOutput replay.
+	state.mu.Lock()
+	state.snapshotData = []byte(`{"full":true,`)
+	state.mu.Unlock()
+	malformedClient, err := DialAttach(ctx, sock, "sess-replay-modes", AttachOptions{ClientID: "screen-bad", ScreenOnly: true})
+	if err != nil {
+		t.Fatalf("DialAttach malformed screen: %v", err)
+	}
+	gotOutput.Reset()
+	for {
+		f, err := malformedClient.ReadFrame(ctx)
+		if err != nil {
+			t.Fatalf("malformed ReadFrame: %v", err)
+		}
+		if f.Kind == FrameScreen {
+			t.Fatalf("malformed snapshot must not be sent as FrameScreen")
+		}
+		if f.Kind == FrameOutput {
+			gotOutput.Write(f.Payload)
+		}
+		if f.Kind == FrameControl {
+			var ctrl ControlMessage
+			if json.Unmarshal(f.Payload, &ctrl) == nil && ctrl.Type == "replay_end" {
+				break
+			}
+		}
+	}
+	malformedClient.Close()
+	if !strings.Contains(gotOutput.String(), "REPLAY_LINE") {
+		t.Fatalf("fallback replay after malformed snapshot missing REPLAY_LINE, got %q", gotOutput.String())
+	}
+
+	// 3. ScreenOnly attach with unavailable snapshot and unavailable Replay() must fall back to h.scrollback.
+	state.mu.Lock()
+	state.snapshotData = nil
+	state.snapshotErr = errors.New("snapshot unavailable")
+	state.replayErr = errors.New("replay unavailable")
+	state.mu.Unlock()
+	fallbackClient, err := DialAttach(ctx, sock, "sess-replay-modes", AttachOptions{ClientID: "screen-err", ScreenOnly: true})
+	if err != nil {
+		t.Fatalf("DialAttach unavailable snapshot: %v", err)
+	}
+	defer fallbackClient.Close()
+	gotOutput.Reset()
+	for {
+		f, err := fallbackClient.ReadFrame(ctx)
+		if err != nil {
+			t.Fatalf("fallback ReadFrame: %v", err)
+		}
+		if f.Kind == FrameOutput {
+			gotOutput.Write(f.Payload)
+		}
+		if f.Kind == FrameControl {
+			var ctrl ControlMessage
+			if json.Unmarshal(f.Payload, &ctrl) == nil && ctrl.Type == "replay_end" {
+				break
+			}
+		}
+	}
+	if !strings.Contains(gotOutput.String(), "REPLAY_LINE") {
+		t.Fatalf("fallback replay from scrollback missing REPLAY_LINE, got %q", gotOutput.String())
+	}
+}
+
+func TestAttachNativeOwnershipScrollSyncAndDetach(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	state := &fakeSnapshotState{scrolled: 9}
+	sock := testSocketPath(t)
+	h, err := Start(ctx, Config{
+		SessionID:  "sess-native",
+		AttemptID:  "att-native",
+		StateDir:   t.TempDir(),
+		SocketPath: sock,
+		Command:    "/bin/sh",
+		Args:       []string{"-c", "stty -echo; echo NATIVE_READY; while IFS= read -r line; do echo SAW:$line; [ \"$line\" = \"bye\" ] && break; done"},
+		State:      state,
+	})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() {
+		_ = h.RequestStop(200 * time.Millisecond)
+		_ = h.Close()
+	}()
+
+	// Hold input ownership with c1 so native attach starts as non-owner.
+	c1, err := DialAttach(ctx, sock, "sess-native", AttachOptions{ClientID: "owner-1"})
+	if err != nil {
+		t.Fatalf("DialAttach owner-1: %v", err)
+	}
+	for {
+		f, err := c1.ReadFrame(ctx)
+		if err != nil {
+			t.Fatalf("c1 ReadFrame: %v", err)
+		}
+		if f.Kind == FrameInputOwner {
+			break
+		}
+	}
+
+	ctlSock := testSocketPath(t)
+	ctlListener, err := net.ListenUnix("unix", &net.UnixAddr{Name: ctlSock, Net: "unix"})
+	if err != nil {
+		t.Fatalf("listen ctl: %v", err)
+	}
+	defer ctlListener.Close()
+
+	master, slave, err := pty.Open()
+	if err != nil {
+		t.Fatalf("pty.Open: %v", err)
+	}
+	defer master.Close()
+	defer slave.Close()
+	_ = pty.Setsize(master, &pty.Winsize{Cols: 96, Rows: 32})
+
+	var ptyBuf bytes.Buffer
+	var ptyMu sync.Mutex
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := master.Read(buf)
+			if n > 0 {
+				chunk := buf[:n]
+				if bytes.Contains(chunk, []byte("\x1b[5n")) {
+					_, _ = master.Write([]byte("\x1b[0n"))
+				}
+				ptyMu.Lock()
+				ptyBuf.Write(chunk)
+				ptyMu.Unlock()
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	nativeErr := make(chan error, 1)
+	go func() {
+		nativeErr <- AttachNative(ctx, sock, "sess-native", slave, slave, NativeAttachOptions{
+			ClientID:      "native-2",
+			ControlSocket: ctlSock,
+		})
+	}()
+
+	ctlConn, err := ctlListener.Accept()
+	if err != nil {
+		t.Fatalf("accept ctl: %v", err)
+	}
+	defer ctlConn.Close()
+
+	events := make(chan nativeControlEvent, 16)
+	go func() {
+		sc := bufio.NewScanner(ctlConn)
+		for sc.Scan() {
+			var evt nativeControlEvent
+			if json.Unmarshal(sc.Bytes(), &evt) == nil {
+				events <- evt
+			}
+		}
+	}()
+
+	var gotReady, gotNonOwner bool
+	deadline := time.After(3 * time.Second)
+	for !(gotReady && gotNonOwner) {
+		select {
+		case evt := <-events:
+			if evt.Type == "ready" {
+				if evt.Scrolled != 9 {
+					t.Fatalf("ready scrolled = %d, want 9", evt.Scrolled)
+				}
+				gotReady = true
+			} else if evt.Type == "input_owner" && !evt.IsOwner && evt.OwnerID == "owner-1" {
+				gotNonOwner = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for ready and initial input_owner (ready=%v nonOwner=%v)", gotReady, gotNonOwner)
+		}
+	}
+
+	// Non-owner input written into native PTY must NOT reach host child.
+	_, _ = master.Write([]byte("blocked\n"))
+	time.Sleep(150 * time.Millisecond)
+	ptyMu.Lock()
+	if strings.Contains(ptyBuf.String(), "SAW:blocked") {
+		ptyMu.Unlock()
+		t.Fatalf("non-owner native input reached child PTY")
+	}
+	ptyMu.Unlock()
+
+	// Release owner-1, then claim input from native control channel.
+	c1.Close()
+	_, _ = ctlConn.Write([]byte("{\"type\":\"claim_input\"}\n"))
+	_, _ = ctlConn.Write([]byte("{\"type\":\"scroll_offset\",\"rows\":4}\n"))
+
+	var becameOwner bool
+	deadline = time.After(3 * time.Second)
+	for !becameOwner {
+		select {
+		case evt := <-events:
+			if evt.Type == "input_owner" && evt.IsOwner && evt.OwnerID == "native-2" {
+				becameOwner = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for native-2 to become input owner")
+		}
+	}
+
+	// Now input must reach child PTY and resize must have updated host dimensions.
+	_, _ = master.Write([]byte("bye\n"))
+	var gotExit bool
+	deadline = time.After(3 * time.Second)
+	for !gotExit {
+		select {
+		case evt := <-events:
+			if evt.Type == "exit" {
+				gotExit = true
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for exit event after owner input")
+		}
+	}
+	if err := <-nativeErr; err != nil {
+		t.Fatalf("AttachNative returned error: %v", err)
+	}
+	rec := h.Wait()
+	if rec.Cols != 96 || rec.Rows != 32 {
+		t.Fatalf("host size after owner claim = %dx%d, want 96x32", rec.Cols, rec.Rows)
+	}
+	if got := state.ScrolledRows(); got != 4 {
+		t.Fatalf("host ScrolledRows = %d, want 4", got)
+	}
+	ptyMu.Lock()
+	out := ptyBuf.String()
+	ptyMu.Unlock()
+	if !strings.Contains(out, "SAW:bye") {
+		t.Fatalf("expected SAW:bye in native PTY output, got %q", out)
 	}
 }

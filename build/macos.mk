@@ -23,9 +23,12 @@ terminal-probe: libghostty
 	$(TERMINAL_CGO) $(GO) build -tags ghostty -o "$(BIN)/flows-terminal-probe" ./cmd/flows-terminal-probe
 	clang -fobjc-arc $(GHOSTTY_CPPFLAGS) -o "$(BIN)/flows-terminal-window" desktop/macos/TerminalView.m desktop/macos/TerminalTests.m "$(GHOSTTY_SURFACE_ARCHIVE)" -framework AppKit -framework Carbon -framework CoreText -framework IOSurface -framework Metal -framework QuartzCore -framework UniformTypeIdentifiers -lc++
 
-.PHONY: terminal-probe-check
+.PHONY: terminal-probe-check terminal-probe-bench
 terminal-probe-check: terminal-probe
 	clang $(GHOSTTY_CPPFLAGS) -o "$(BIN)/flows-vt-check" desktop/macos/SnapshotTests.c $(GHOSTTY_VT_LDFLAGS) -Wl,-rpath,"$(GHOSTTY_DIR)/lib"
 	"$(BIN)/flows-vt-check"
 	$(TERMINAL_CGO) $(GO) test -tags ghostty ./internal/terminal
 	@sh desktop/macos/check-terminal.sh "$(BIN)/flows-terminal-probe" desktop/macos/terminal-fixture.py
+
+terminal-probe-bench: terminal-probe
+	@sh desktop/macos/check-terminal.sh --bench "$(BIN)/flows-terminal-probe" desktop/macos/terminal-fixture.py

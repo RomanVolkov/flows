@@ -1,6 +1,8 @@
 package host
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -15,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -187,14 +190,23 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request, preview bool)
 		_ = conn.Close(websocket.StatusPolicyViolation, "stale attach epoch")
 		return
 	}
+	obs.screenOnly = false
 	var screenReplay []byte
-	if state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) }); ok {
-		screenReplay, _ = state.SnapshotFrame()
+	if q.Get("screen") == "true" {
+		if state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) }); ok {
+			if frame, err := state.SnapshotFrame(); err == nil && len(frame) > 0 && json.Valid(frame) {
+				screenReplay = frame
+				obs.screenOnly = true
+			}
+		}
 	}
-	obs.screenOnly = q.Get("screen") == "true" && len(screenReplay) > 0
 	var replay []byte
-	if len(screenReplay) == 0 {
+	if !obs.screenOnly {
 		replay = h.snapshotLocked()
+	}
+	scrolledRows := 0
+	if scroller, ok := h.cfg.State.(interface{ ScrolledRows() int }); ok {
+		scrolledRows = scroller.ScrolledRows()
 	}
 	seq := h.record.StreamSeq
 	cols, rows := h.record.Cols, h.record.Rows
@@ -243,7 +255,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request, preview bool)
 	}); err != nil {
 		return
 	}
-	if len(screenReplay) > 0 {
+	if obs.screenOnly {
 		if err := writeWSFrame(ctx, conn, Frame{Kind: FrameScreen, Seq: seq, Payload: screenReplay}); err != nil {
 			return
 		}
@@ -259,7 +271,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request, preview bool)
 			}
 		}
 	}
-	if err := writeWSFrame(ctx, conn, controlFrame(ControlMessage{Type: "replay_end", Seq: seq}, seq)); err != nil {
+	if err := writeWSFrame(ctx, conn, controlFrame(ControlMessage{Type: "replay_end", Seq: seq, Rows: scrolledRows}, seq)); err != nil {
 		return
 	}
 	ownerPayload, _ := json.Marshal(InputOwnerEvent{OwnerID: ownerID, Epoch: ownerEpoch})
@@ -390,6 +402,19 @@ func (h *Host) handleClientFrame(clientID string, frame Frame, reply func(Frame)
 				}
 			}
 			h.mu.Unlock()
+		case "scroll_offset":
+			h.mu.Lock()
+			if state, ok := h.cfg.State.(interface{ SetScrolledRows(int) error }); ok {
+				if err := state.SetScrolledRows(ctrl.Rows); err == nil {
+					for _, obs := range h.observers {
+						if obs.screenOnly {
+							h.flushScreenLocked(true)
+							break
+						}
+					}
+				}
+			}
+			h.mu.Unlock()
 		}
 	}
 	return nil
@@ -503,10 +528,88 @@ func (c *AttachConn) Close() error {
 	return c.conn.Close(websocket.StatusNormalClosure, "client detached")
 }
 
-// AttachTTY attaches a local TTY (such as CLI or native Ghostty relay) to the host
-// over the shared WebSocket attach protocol.
+// NativeAttachOptions configures AttachNative for a native Ghostty surface relay.
+type NativeAttachOptions struct {
+	ClientID      string
+	Nonce         string
+	Epoch         uint64
+	ControlSocket string
+}
+
+type nativeControlEvent struct {
+	Type       string `json:"type"`
+	ClientID   string `json:"client_id,omitempty"`
+	OwnerID    string `json:"owner_id,omitempty"`
+	Epoch      uint64 `json:"epoch,omitempty"`
+	IsOwner    bool   `json:"is_owner,omitempty"`
+	Scrolled   int    `json:"scrolled,omitempty"`
+	Cols       uint16 `json:"cols,omitempty"`
+	Rows       uint16 `json:"rows,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	ExitCode   int    `json:"exit_code,omitempty"`
+	ExitSignal string `json:"exit_signal,omitempty"`
+}
+
+type nativeControlCommand struct {
+	Type string `json:"type"`
+	Rows int    `json:"rows,omitempty"`
+}
+
+// AttachTTY attaches a local TTY (such as CLI) to the host over the shared
+// WebSocket attach protocol.
 func AttachTTY(ctx context.Context, socketPath, sessionID string, ttyIn, ttyOut *os.File) error {
-	client, err := DialAttach(ctx, socketPath, sessionID, AttachOptions{})
+	return attachTTYWithOptions(ctx, socketPath, sessionID, ttyIn, ttyOut, NativeAttachOptions{})
+}
+
+// AttachNative attaches a native Ghostty surface relay to the host over the
+// shared WebSocket attach protocol, bridging lifecycle, input ownership, and
+// scrollback offset over opts.ControlSocket when configured.
+func AttachNative(ctx context.Context, socketPath, sessionID string, ttyIn, ttyOut *os.File, opts NativeAttachOptions) error {
+	return attachTTYWithOptions(ctx, socketPath, sessionID, ttyIn, ttyOut, opts)
+}
+
+func attachTTYWithOptions(ctx context.Context, socketPath, sessionID string, ttyIn, ttyOut *os.File, opts NativeAttachOptions) error {
+	nativeMode := opts.ControlSocket != ""
+	clientID := opts.ClientID
+	if nativeMode && clientID == "" {
+		var err error
+		clientID, err = randomHex(8)
+		if err != nil {
+			return err
+		}
+	}
+
+	var ctlConn net.Conn
+	var ctlMu sync.Mutex
+	sendCtl := func(evt nativeControlEvent) {
+		if ctlConn == nil {
+			return
+		}
+		data, err := json.Marshal(evt)
+		if err != nil {
+			return
+		}
+		ctlMu.Lock()
+		_, _ = ctlConn.Write(append(data, '\n'))
+		ctlMu.Unlock()
+	}
+	if nativeMode {
+		var err error
+		ctlConn, err = net.DialTimeout("unix", opts.ControlSocket, 3*time.Second)
+		if err != nil {
+			return fmt.Errorf("dial native control socket: %w", err)
+		}
+		defer ctlConn.Close()
+	}
+
+	relayCtx, relayCancel := context.WithCancel(ctx)
+	defer relayCancel()
+
+	client, err := DialAttach(relayCtx, socketPath, sessionID, AttachOptions{
+		ClientID: clientID,
+		Nonce:    opts.Nonce,
+		Epoch:    opts.Epoch,
+	})
 	if err != nil {
 		return err
 	}
@@ -524,34 +627,171 @@ func AttachTTY(ctx context.Context, socketPath, sessionID string, ttyIn, ttyOut 
 	signal.Notify(resizes, syscall.SIGWINCH)
 	defer signal.Stop(resizes)
 
-	// Wait for replay_end before sending initial size and pumping input.
+	var hostSize pty.Winsize
+	var scrolledRows int
+	var initialOwner *InputOwnerEvent
+
+	// Wait for replay_end before syncing with the terminal and pumping input.
 	for {
-		frame, err := client.ReadFrame(ctx)
+		frame, err := client.ReadFrame(relayCtx)
 		if err != nil {
 			return err
 		}
 		switch frame.Kind {
+		case FrameSize:
+			if sz, err := decodeWinsize(frame.Payload); err == nil {
+				hostSize = sz
+			}
 		case FrameOutput:
 			if _, err := ttyOut.Write(frame.Payload); err != nil {
 				return err
 			}
+		case FrameInputOwner:
+			var evt InputOwnerEvent
+			if json.Unmarshal(frame.Payload, &evt) == nil {
+				initialOwner = &evt
+			}
 		case FrameControl:
 			var ctrl ControlMessage
-			if json.Unmarshal(frame.Payload, &ctrl) == nil && ctrl.Type == "replay_end" {
-				goto live
+			if json.Unmarshal(frame.Payload, &ctrl) == nil {
+				if ctrl.Type == "fenced" {
+					sendCtl(nativeControlEvent{Type: "fenced", Reason: ctrl.Reason})
+					return fmt.Errorf("attach fenced: %s", ctrl.Reason)
+				}
+				if ctrl.Type == "replay_end" {
+					scrolledRows = ctrl.Rows
+					goto syncTerminal
+				}
 			}
 		case FrameExit:
+			var evt ExitEvent
+			if json.Unmarshal(frame.Payload, &evt) == nil {
+				sendCtl(nativeControlEvent{Type: "exit", ExitCode: evt.ExitCode, ExitSignal: evt.ExitSignal})
+			}
 			return nil
 		}
 	}
 
-live:
+syncTerminal:
+	ttyReads := make(chan []byte, 32)
+	ttyErr := make(chan error, 1)
+	go func() {
+		buf := make([]byte, maxFramePayload)
+		for {
+			n, err := ttyIn.Read(buf)
+			if n > 0 {
+				chunk := append([]byte(nil), buf[:n]...)
+				select {
+				case ttyReads <- chunk:
+				case <-relayCtx.Done():
+					return
+				}
+			}
+			if err != nil {
+				select {
+				case ttyErr <- err:
+				default:
+				}
+				return
+			}
+		}
+	}()
+
+	var pendingInput []byte
+	if nativeMode && term.IsTerminal(int(ttyIn.Fd())) {
+		// Wait for the local Ghostty surface to parse all replayed bytes before emitting ready/scroll.
+		if _, err := ttyOut.Write([]byte("\x1b[5n")); err != nil {
+			return err
+		}
+		var dsrBuf []byte
+		timer := time.NewTimer(500 * time.Millisecond)
+		for {
+			select {
+			case chunk := <-ttyReads:
+				dsrBuf = append(dsrBuf, chunk...)
+				if idx := bytes.Index(dsrBuf, []byte("\x1b[0n")); idx >= 0 {
+					pendingInput = append(pendingInput, dsrBuf[:idx]...)
+					pendingInput = append(pendingInput, dsrBuf[idx+4:]...)
+					goto ready
+				}
+			case <-timer.C:
+				pendingInput = append(pendingInput, dsrBuf...)
+				goto ready
+			case <-ttyErr:
+				timer.Stop()
+				return nil
+			case <-relayCtx.Done():
+				timer.Stop()
+				return nil
+			}
+		}
+	ready:
+		timer.Stop()
+	}
+
+	var isOwner atomic.Bool
 	sendSize := func() {
+		if nativeMode && !isOwner.Load() {
+			return
+		}
 		if size, err := pty.GetsizeFull(ttyIn); err == nil && size.Cols > 0 && size.Rows > 0 {
-			_ = client.SendResize(ctx, size.Cols, size.Rows, size.X, size.Y)
+			_ = client.SendResize(relayCtx, size.Cols, size.Rows, size.X, size.Y)
 		}
 	}
-	sendSize()
+	handleOwner := func(evt InputOwnerEvent) {
+		nowOwner := !nativeMode || (evt.OwnerID == clientID && clientID != "")
+		wasOwner := isOwner.Swap(nowOwner)
+		sendCtl(nativeControlEvent{
+			Type:     "input_owner",
+			ClientID: clientID,
+			OwnerID:  evt.OwnerID,
+			Epoch:    evt.Epoch,
+			IsOwner:  nowOwner,
+		})
+		if nowOwner && !wasOwner {
+			sendSize()
+		}
+	}
+
+	if nativeMode {
+		sendCtl(nativeControlEvent{
+			Type:     "ready",
+			ClientID: clientID,
+			Scrolled: scrolledRows,
+			Cols:     hostSize.Cols,
+			Rows:     hostSize.Rows,
+		})
+	} else {
+		sendSize()
+	}
+	if initialOwner != nil {
+		handleOwner(*initialOwner)
+	}
+
+	var detached atomic.Bool
+	if ctlConn != nil {
+		go func() {
+			scanner := bufio.NewScanner(ctlConn)
+			for scanner.Scan() {
+				var cmd nativeControlCommand
+				if json.Unmarshal(scanner.Bytes(), &cmd) != nil {
+					continue
+				}
+				switch cmd.Type {
+				case "claim_input":
+					_ = client.SendControl(relayCtx, ControlMessage{Type: "claim_input"})
+				case "scroll_offset":
+					_ = client.SendControl(relayCtx, ControlMessage{Type: "scroll_offset", Rows: cmd.Rows})
+					case "detach":
+					detached.Store(true)
+					relayCancel()
+					return
+				}
+			}
+			detached.Store(true)
+			relayCancel()
+		}()
+	}
 
 	done := make(chan struct{})
 	defer close(done)
@@ -568,23 +808,34 @@ live:
 	}()
 
 	go func() {
-		buf := make([]byte, maxFramePayload)
+		if len(pendingInput) > 0 && (!nativeMode || isOwner.Load()) {
+			if writeErr := client.WriteInput(relayCtx, pendingInput); writeErr != nil {
+				return
+			}
+		}
 		for {
-			n, err := ttyIn.Read(buf)
-			if n > 0 {
-				if writeErr := client.WriteInput(ctx, buf[:n]); writeErr != nil {
+			select {
+			case <-done:
+				return
+			case chunk := <-ttyReads:
+				if nativeMode && !isOwner.Load() {
+					continue
+				}
+				if writeErr := client.WriteInput(relayCtx, chunk); writeErr != nil {
 					return
 				}
-			}
-			if err != nil {
+			case <-ttyErr:
 				return
 			}
 		}
 	}()
 
 	for {
-		frame, err := client.ReadFrame(ctx)
+		frame, err := client.ReadFrame(relayCtx)
 		if err != nil {
+			if detached.Load() {
+				return nil
+			}
 			var closeErr websocket.CloseError
 			if errors.As(err, &closeErr) && closeErr.Code == websocket.StatusNormalClosure {
 				return nil
@@ -599,7 +850,21 @@ live:
 			if _, err := ttyOut.Write(frame.Payload); err != nil {
 				return err
 			}
+		case FrameInputOwner:
+			var evt InputOwnerEvent
+			if json.Unmarshal(frame.Payload, &evt) == nil {
+				handleOwner(evt)
+			}
+		case FrameControl:
+			var ctrl ControlMessage
+			if json.Unmarshal(frame.Payload, &ctrl) == nil && ctrl.Type == "fenced" {
+				sendCtl(nativeControlEvent{Type: "fenced", Reason: ctrl.Reason})
+			}
 		case FrameExit:
+			var evt ExitEvent
+			if json.Unmarshal(frame.Payload, &evt) == nil {
+				sendCtl(nativeControlEvent{Type: "exit", ExitCode: evt.ExitCode, ExitSignal: evt.ExitSignal})
+			}
 			return nil
 		}
 	}

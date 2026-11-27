@@ -67,3 +67,34 @@ func TestGhosttyPrimaryReplayIncludesScrollback(t *testing.T) {
 		t.Fatal("formatted replay lost primary scrollback")
 	}
 }
+
+func TestGhosttyScrolledRowsTracking(t *testing.T) {
+	state, err := NewGhosttyState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer state.Close()
+
+	state.Feed(bytes.Repeat([]byte("history line\r\n"), 80), nil)
+	if got := state.ScrolledRows(); got != 0 {
+		t.Fatalf("initial ScrolledRows = %d, want 0", got)
+	}
+	if _, err := state.Scroll(-15); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.ScrolledRows(); got != 15 {
+		t.Fatalf("after Scroll(-15), ScrolledRows = %d, want 15", got)
+	}
+	if err := state.SetScrolledRows(7); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.ScrolledRows(); got != 7 {
+		t.Fatalf("after SetScrolledRows(7), ScrolledRows = %d, want 7", got)
+	}
+	if err := state.SetScrolledRows(0); err != nil {
+		t.Fatal(err)
+	}
+	if got := state.ScrolledRows(); got != 0 {
+		t.Fatalf("after SetScrolledRows(0), ScrolledRows = %d, want 0", got)
+	}
+}
