@@ -142,3 +142,83 @@ func TestInstallFailedBuildConcurrentMissingCompilerUpgradeAndRollback(t *testin
 		t.Fatalf("Rollback failed: rb=%+v err=%v", rb, err)
 	}
 }
+
+func TestInstallCmdPluginAutoEntryAndStageModfileOffline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	home := testInstallHome(t)
+	sdkSrc, err := filepath.Abs("../../sdk/go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdkDst := filepath.Join(home.Spec(), "v1", "sdk", "go")
+	if err := os.MkdirAll(sdkDst, 0700); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(sdkSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(sdkSrc, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sdkDst, e.Name()), data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Place tool source in a staging dir where ../../spec/v1/sdk/go does not resolve locally.
+	src := filepath.Join(t.TempDir(), "staged-cmd-plugin")
+	cmdDir := filepath.Join(src, "cmd", "plugin")
+	if err := os.MkdirAll(cmdDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	goMod := "module stagedcmd\n\ngo 1.26.10\n\nrequire github.com/romanvolkov/flows/sdk/go v0.0.0\n\nreplace github.com/romanvolkov/flows/sdk/go => ../../spec/v1/sdk/go\n"
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte(goMod), 0600); err != nil {
+		t.Fatal(err)
+	}
+	mainGo := `package main
+
+import (
+	"context"
+	sdk "github.com/romanvolkov/flows/sdk/go"
+)
+
+func main() {
+	_ = sdk.Serve(sdk.Manifest{
+		ID: "stagedcmd",
+		Version: "1.0.0",
+		Operations: []sdk.Operation{{ID: "stagedcmd.echo", Description: "echo"}},
+	}, map[string]sdk.Handler{
+		"stagedcmd.echo": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
+			return map[string]string{"ok": "cmd-plugin"}, nil
+		},
+	})
+}
+`
+	if err := os.WriteFile(filepath.Join(cmdDir, "main.go"), []byte(mainGo), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GOPROXY", "off")
+	active, err := plugin.Install(ctx, home, "stagedcmd", "1.0.0", src, plugin.InstallOptions{Bundled: true})
+	if err != nil {
+		t.Fatalf("Install cmd/plugin offline failed: %v", err)
+	}
+	if !active.Bundled {
+		t.Fatalf("expected active.Bundled=true")
+	}
+	res, err := plugin.Invoke(ctx, plugin.InvokeConfig{
+		Binary:    active.Receipt.BinaryPath,
+		Operation: "stagedcmd.echo",
+	})
+	if err != nil || string(res.Output) != `{"ok":"cmd-plugin"}` {
+		t.Fatalf("unexpected invoke result: out=%s err=%v", string(res.Output), err)
+	}
+}

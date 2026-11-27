@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/romanvolkov/flows/internal/workspace"
 	sdk "github.com/romanvolkov/flows/sdk/go"
 )
 
@@ -37,7 +36,7 @@ func main() {
 			if err := unmarshalInput(ic.Input, &in); err != nil {
 				return nil, err
 			}
-			return workspace.ResolveRepo(ctx, in.RepoDir)
+			return ResolveRepo(ctx, in.RepoDir)
 		},
 		"git.checkout": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
 			var in struct {
@@ -49,7 +48,7 @@ func main() {
 			if err := unmarshalInput(ic.Input, &in); err != nil {
 				return nil, err
 			}
-			p, err := workspace.PrepareWorktree(ctx, in.RepoRoot, in.TargetDir, in.Branch, in.ReadOnly)
+			p, err := PrepareWorktree(ctx, in.RepoRoot, in.TargetDir, in.Branch, in.ReadOnly)
 			return map[string]string{"path": p}, err
 		},
 		"git.status": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
@@ -59,7 +58,7 @@ func main() {
 			if err := unmarshalInput(ic.Input, &in); err != nil {
 				return nil, err
 			}
-			return workspace.Status(ctx, in.Path)
+			return Status(ctx, in.Path)
 		},
 		"git.commit": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
 			var in struct {
@@ -69,7 +68,7 @@ func main() {
 			if err := unmarshalInput(ic.Input, &in); err != nil {
 				return nil, err
 			}
-			sha, err := workspace.Commit(ctx, in.Path, in.Message)
+			sha, err := Commit(ctx, in.Path, in.Message)
 			return map[string]string{"head_sha": sha}, err
 		},
 		"git.push": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
@@ -82,7 +81,7 @@ func main() {
 			if err := unmarshalInput(ic.Input, &in); err != nil {
 				return nil, err
 			}
-			return workspace.Push(ctx, in.Path, in.Remote, in.Branch, in.ExpectedHead)
+			return Push(ctx, in.Path, in.Remote, in.Branch, in.ExpectedHead)
 		},
 	})
 	if err != nil {

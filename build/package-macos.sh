@@ -38,18 +38,33 @@ cp desktop/app/frontend/src/assets/fonts/iosevka-term/LICENSE.md "${CONTENTS}/Re
 cp desktop/app/frontend/src/assets/fonts/iosevka-term/*.ttf "${CONTENTS}/Resources/fonts/"
 cp build/bin/Flows-desktop "${CONTENTS}/MacOS/Flows"
 
-# Prebuild shipped plugins so the packaged app runs without a compiler.
-for plugin in git github gitlab jira youtrack zulip; do
-  mkdir -p "${CONTENTS}/Resources/plugins/${plugin}"
-  cp "plugins/${plugin}/tool.yaml" "${CONTENTS}/Resources/plugins/${plugin}/tool.yaml"
-  go build -trimpath -o "${CONTENTS}/Resources/plugins/${plugin}/${plugin}-plugin" "./plugins/${plugin}/cmd/plugin"
-done
-
-# Bundle built-in workflows and spec/v1.
+# Bundle built-in workflows, spec/v1, and Go SDK for offline tool compilation.
 cp -R workflows/* "${CONTENTS}/Resources/workflows/"
 cp -R spec/v1/* "${CONTENTS}/Resources/spec/v1/"
 cp schema/workflow-v1.json "${CONTENTS}/Resources/spec/v1/workflow.schema.json"
 cp schema/tool-v1.json "${CONTENTS}/Resources/spec/v1/tool.schema.json"
+mkdir -p "${CONTENTS}/Resources/spec/v1/sdk/go"
+cp -R sdk/go/* "${CONTENTS}/Resources/spec/v1/sdk/go/"
+
+# Distribute shipped plugins as Go source code by default so Flow compiles them using the host Go compiler.
+# Set FLOWS_PREBUILD_PLUGINS=1 to also include prebuilt plugin binaries alongside sources.
+for plugin in git github gitlab jira youtrack zulip; do
+  mkdir -p "${CONTENTS}/Resources/plugins/${plugin}/cmd/plugin"
+  cp "plugins/${plugin}/tool.yaml" "${CONTENTS}/Resources/plugins/${plugin}/tool.yaml"
+  cp plugins/${plugin}/cmd/plugin/*.go "${CONTENTS}/Resources/plugins/${plugin}/cmd/plugin/"
+  cat > "${CONTENTS}/Resources/plugins/${plugin}/go.mod" <<EOF
+module flows-plugin-${plugin}
+
+go 1.26.10
+
+require github.com/romanvolkov/flows/sdk/go v0.0.0
+
+replace github.com/romanvolkov/flows/sdk/go => ../../spec/v1/sdk/go
+EOF
+  if [ "${FLOWS_PREBUILD_PLUGINS:-0}" = "1" ]; then
+    go build -trimpath -o "${CONTENTS}/Resources/plugins/${plugin}/${plugin}-plugin" "./plugins/${plugin}/cmd/plugin"
+  fi
+done
 
 # Sign with configured Developer ID or ad-hoc for local development.
 if command -v codesign >/dev/null 2>&1; then

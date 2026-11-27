@@ -19,7 +19,7 @@ import (
 	"github.com/romanvolkov/flows/internal/paths"
 )
 
-var ErrMissingGoCompiler = errors.New("go compiler not found")
+var ErrMissingGoCompiler = errors.New("go compiler not found; a Go toolchain is required on the host machine")
 
 // CompileError surfaces compiler output when building a tool fails.
 type CompileError struct {
@@ -48,21 +48,45 @@ type BuildReceipt struct {
 	BuiltAt      int64  `json:"built_at"`
 }
 
-// BuildTool compiles a Go tool package into a temporary staging directory,
-// verifies its protocol handshake and manifest, and promotes it atomically.
-func BuildTool(ctx context.Context, home paths.Home, toolID, version, sourceDir, entry, goBin string) (BuildReceipt, error) {
+// CheckGoCompiler resolves goBin (defaulting to "go") on the host machine and verifies it responds cleanly.
+func CheckGoCompiler(ctx context.Context, goBin string) (string, string, error) {
 	if goBin == "" {
 		goBin = "go"
 	}
-	goPath, err := exec.LookPath(goBin)
+	goPath, err := resolveGoBinary(goBin)
 	if err != nil {
-		return BuildReceipt{}, fmt.Errorf("%w: %s (%v)", ErrMissingGoCompiler, goBin, err)
+		return "", "", fmt.Errorf("%w: %s (%v)", ErrMissingGoCompiler, goBin, err)
 	}
 	verOut, err := exec.CommandContext(ctx, goPath, "version").CombinedOutput()
 	if err != nil {
-		return BuildReceipt{}, fmt.Errorf("probe go version: %w", err)
+		return "", "", fmt.Errorf("probe go version: %w", err)
 	}
-	goVersion := strings.TrimSpace(string(verOut))
+	return goPath, strings.TrimSpace(string(verOut)), nil
+}
+
+func resolveGoBinary(goBin string) (string, error) {
+	if p, err := exec.LookPath(goBin); err == nil {
+		return p, nil
+	} else if goBin != "go" {
+		return "", err
+	}
+	// GUI bundles and launchd jobs on macOS may run with a minimal PATH that omits Homebrew or /usr/local/go.
+	for _, candidate := range []string{"/opt/homebrew/bin/go", "/usr/local/go/bin/go", "/usr/local/bin/go"} {
+		info, err := os.Stat(candidate)
+		if err == nil && !info.IsDir() && info.Mode().Perm()&0111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", errors.New("executable file not found in $PATH")
+}
+
+// BuildTool compiles a Go tool package into a temporary staging directory,
+// verifies its protocol handshake and manifest, and promotes it atomically.
+func BuildTool(ctx context.Context, home paths.Home, toolID, version, sourceDir, entry, goBin string) (BuildReceipt, error) {
+	goPath, goVersion, err := CheckGoCompiler(ctx, goBin)
+	if err != nil {
+		return BuildReceipt{}, err
+	}
 
 	srcDigest, modDigest, err := computeSourceAndModDigests(sourceDir)
 	if err != nil {
@@ -98,11 +122,17 @@ func BuildTool(ctx context.Context, home paths.Home, toolID, version, sourceDir,
 		}
 	}()
 
-	if entry == "" {
-		entry = "."
-	}
+	resolvedEntry := resolveEntry(sourceDir, entry)
 	stageBin := filepath.Join(stageDir, "plugin")
-	cmd := exec.CommandContext(ctx, goPath, "build", "-trimpath", "-o", stageBin, entry)
+	args := []string{"build", "-trimpath", "-buildvcs=false"}
+	if modfile, err := prepareStageModfile(sourceDir, stageDir, home); err != nil {
+		return BuildReceipt{}, err
+	} else if modfile != "" {
+		args = append(args, "-modfile="+modfile)
+	}
+	args = append(args, "-o", stageBin, resolvedEntry)
+
+	cmd := exec.CommandContext(ctx, goPath, args...)
 	cmd.Dir = sourceDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return BuildReceipt{}, &CompileError{Diagnostics: string(out), Err: err}
@@ -197,4 +227,113 @@ func computeCacheKey(srcDigest, modDigest, goos, goarch, goVersion string) strin
 	h := sha256.New()
 	fmt.Fprintf(h, "%s|%s|%s|%s|%s", srcDigest, modDigest, goos, goarch, goVersion)
 	return hex.EncodeToString(h.Sum(nil))[:24]
+}
+
+func resolveEntry(sourceDir, entry string) string {
+	if entry != "" {
+		return entry
+	}
+	if hasGoFiles(sourceDir) {
+		return "."
+	}
+	if hasGoFiles(filepath.Join(sourceDir, "cmd", "plugin")) {
+		return "./cmd/plugin"
+	}
+	return "."
+}
+
+func hasGoFiles(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
+			return true
+		}
+	}
+	return false
+}
+
+const flowsGoSDKModule = "github.com/romanvolkov/flows/sdk/go"
+
+func prepareStageModfile(sourceDir, stageDir string, home paths.Home) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(sourceDir, "go.mod"))
+	if err != nil || !strings.Contains(string(raw), flowsGoSDKModule) {
+		return "", nil
+	}
+	if target, ok := extractReplaceTarget(string(raw), flowsGoSDKModule); ok {
+		resolved := target
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(sourceDir, filepath.FromSlash(target))
+		}
+		if _, err := os.Stat(filepath.Join(resolved, "go.mod")); err == nil {
+			return "", nil
+		}
+	}
+	sdkDir, err := filepath.Abs(filepath.Join(home.Spec(), "v1", "sdk", "go"))
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(filepath.Join(sdkDir, "go.mod")); err != nil {
+		return "", nil
+	}
+	rewritten := rewriteSDKReplace(string(raw), flowsGoSDKModule, sdkDir)
+	stageMod := filepath.Join(stageDir, "go.mod")
+	if err := os.WriteFile(stageMod, []byte(rewritten), 0600); err != nil {
+		return "", err
+	}
+	if sumData, err := os.ReadFile(filepath.Join(sourceDir, "go.sum")); err == nil {
+		if err := os.WriteFile(filepath.Join(stageDir, "go.sum"), sumData, 0600); err != nil {
+			return "", err
+		}
+	}
+	return stageMod, nil
+}
+
+func extractReplaceTarget(modContent, modPath string) (string, bool) {
+	for _, line := range strings.Split(modContent, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "replace ") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "replace "))
+		left, right, ok := strings.Cut(rest, "=>")
+		if !ok {
+			continue
+		}
+		if fields := strings.Fields(left); len(fields) > 0 && fields[0] == modPath {
+			fields := strings.Fields(right)
+			if len(fields) > 0 {
+				return fields[0], true
+			}
+		}
+	}
+	return "", false
+}
+
+func rewriteSDKReplace(modContent, modPath, localSDKDir string) string {
+	replacement := fmt.Sprintf("replace %s => %s", modPath, filepath.ToSlash(localSDKDir))
+	lines := strings.Split(modContent, "\n")
+	replaced := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "replace ") {
+			continue
+		}
+		rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "replace "))
+		left, _, ok := strings.Cut(rest, "=>")
+		if ok && len(strings.Fields(left)) > 0 && strings.Fields(left)[0] == modPath {
+			lines[i] = replacement
+			replaced = true
+		}
+	}
+	if !replaced {
+		lines = append(lines, "", replacement)
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
 }

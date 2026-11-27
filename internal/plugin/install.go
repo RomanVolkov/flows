@@ -24,8 +24,9 @@ type ActiveTool struct {
 
 // InstallOptions configures tool build and activation.
 type InstallOptions struct {
-	Entry string
-	GoBin string
+	Bundled bool
+	Entry   string
+	GoBin   string
 }
 
 // Install builds sourceDir and atomically activates it under home.State,
@@ -46,6 +47,7 @@ func Install(ctx context.Context, home paths.Home, toolID, version, sourceDir st
 	}
 
 	active := ActiveTool{
+		Bundled:     opts.Bundled,
 		ToolID:      toolID,
 		SourceDir:   sourceDir,
 		Entry:       opts.Entry,
