@@ -30,9 +30,11 @@ func (r *workflowRunner) serveHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		r.library.trigger()
-		entries := r.library.snapshot().Entries
+		r.library.mu.RLock()
+		entries := r.library.index.Entries
+		preparing := r.library.lastScan == nil
+		r.library.mu.RUnlock()
 		workflows := make([]workflowSummary, 0)
-		preparing := false
 		for _, entry := range entries {
 			preparing = preparing || entry.Status == "preparing"
 			if entry.Kind != library.KindWorkflow || entry.Status != "ready" {

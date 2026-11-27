@@ -1,11 +1,18 @@
 <script lang="ts">
  import {onMount,tick} from 'svelte'
- import {request} from './workspace'
+ import {request, type WorkflowSummary, type WorkflowField, type RunWorkflowRequest, type RunWorkflowResponse} from './workspace'
  import authoringPrompt from './prompts/create-flow.md?raw'
  let {started,close}:{started:(id:string)=>void;close:()=>void}=$props()
  let scenario=$state('session'), agent=$state('claude'), repo=$state(''), message=$state('')
  let authoringType=$state<'workflow'|'tool'>('workflow'), idea=$state('')
  let error=$state(''), busy=$state(false), ready=$state(false), history=$state<string[]>([])
+ let workflows=$state<WorkflowSummary[]>([])
+ let workflowID=$state('')
+ let workflowInputs=$state<Record<string,unknown>>({})
+ let workflowLoading=$state(false)
+ let workflowTimer:ReturnType<typeof setTimeout>|undefined
+ let workflowFetch=0
+ const selectedWorkflow=$derived(workflows.find(w=>w.id===workflowID))
  let harnessesLoading=$state(true)
  let review=$state<{id:string;version:string;kind:string;status:string;valid:boolean;diagnostics:{file:string;line:number;column:number;message:string;severity:string}[]}>()
  let harnesses=$state<{id:string;version:string}[]>([])
@@ -28,7 +35,60 @@
   }
 
  const id=crypto.randomUUID()
- function changeScenario(next:string){scenario=next;review=undefined;error=''}
+ function changeScenario(next:string){
+  scenario=next;review=undefined;error=''
+  if(next==='workflow')void loadWorkflows()
+  else stopWorkflowRefresh()
+ }
+ function stopWorkflowRefresh(){workflowFetch++;clearTimeout(workflowTimer)}
+ function selectWorkflow(id:string){
+  workflowID=id
+  workflowInputs=Object.fromEntries((workflows.find(w=>w.id===id)?.form.fields??[])
+   .filter(field=>field.default!==undefined).map(field=>[field.name,field.default]))
+ }
+ async function loadWorkflows(){
+  const seq=++workflowFetch
+  clearTimeout(workflowTimer)
+  workflowLoading=true
+  try{
+   const result=await request<{workflows:WorkflowSummary[];preparing:boolean}>('workflows')
+   if(seq!==workflowFetch)return
+   const previous=selectedWorkflow
+   workflows=result.workflows
+   if(previous?.digest!==selectedWorkflow?.digest||(!selectedWorkflow&&!result.preparing))selectWorkflow('')
+   if(result.preparing)workflowTimer=setTimeout(()=>void loadWorkflows(),400)
+  }catch(e){if(seq===workflowFetch)error=String(e)}
+  finally{if(seq===workflowFetch)workflowLoading=false}
+ }
+ function displayValue(field:WorkflowField){
+  const value=workflowInputs[field.name]
+  return typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'')
+ }
+ function collectInputs(fields:WorkflowField[]){
+  const inputs:Record<string,unknown>={}
+  for(const field of fields){
+   const value=workflowInputs[field.name]
+   if(value===undefined||value===''){
+    if(field.required&&field.default===undefined)throw Error(field.name+' is required')
+    continue
+   }
+   if(field.type==='number'||field.type==='integer'){
+    const number=Number(value)
+    if(!Number.isFinite(number)||(field.type==='integer'&&!Number.isInteger(number)))throw Error(field.name+' must be a '+field.type)
+    inputs[field.name]=number
+   }else if(field.type==='array'||field.type==='object'){
+    try{inputs[field.name]=typeof value==='string'?JSON.parse(value):value}catch{throw Error(field.name+' must contain a valid JSON '+field.type)}
+   }else{
+    inputs[field.name]=value
+   }
+  }
+  return inputs
+ }
+ function rememberRepo(){
+  if(repo.trim()){
+   try{localStorage.setItem('flows.repos',JSON.stringify([repo.trim(),...history.filter(r=>r!==repo.trim())].slice(0,30)))}catch{}
+  }
+ }
  onMount(()=>{
   let active=true, preferred='claude'
   try {history=JSON.parse(localStorage.getItem('flows.repos')??'[]')}catch{history=[]}
@@ -53,18 +113,25 @@
    if(!active)return
    preferred=config.default_harness;repo=config.default_directory??'';chooseAgent();ready=true;await tick();focusInitial()
   }).catch(e=>{if(active)error=String(e)})
-  return()=>{active=false}
+  return()=>{active=false;stopWorkflowRefresh()}
  })
  async function create(){
   if(busy||!ready)return
   busy=true;error=''
   try {
-   if(scenario==='session'||scenario==='authoring'){
+   if(scenario==='workflow'){
+    if(!selectedWorkflow)return
+    const body:RunWorkflowRequest={request_id:id,workflow_id:selectedWorkflow.id,expected_digest:selectedWorkflow.digest,
+     work_dir:repo.trim()||undefined,inputs:collectInputs(selectedWorkflow.form.fields)}
+    try{
+     const result=await request<RunWorkflowResponse>('runWorkflow',JSON.stringify(body))
+     rememberRepo()
+     started(result.node_id)
+    }catch(e){void loadWorkflows();throw e}
+   }else if(scenario==='session'||scenario==='authoring'){
     const prompt=scenario==='authoring'?`${authoringPrompt}\n\nThe user selected: ${authoringType}.\nTheir main idea: ${idea.trim()}`:message
     const result=await request<{node_id:string}>('newSession',JSON.stringify({request_id:id,harness:agent,work_dir:repo.trim(),prompt}))
-    if(repo.trim()){
-     try{localStorage.setItem('flows.repos',JSON.stringify([repo.trim(),...history.filter(r=>r!==repo.trim())].slice(0,30)))}catch{}
-    }
+    rememberRepo()
     started(result.node_id)
    }else{
     const body=JSON.stringify({directory:repo.trim()})
@@ -84,7 +151,7 @@
  <form class="dialog" onsubmit={(e)=>{e.preventDefault();create()}}>
   <h2>New</h2>
   <label for="scenario">Scenario</label>
-  <select id="scenario" value={scenario} onchange={e=>changeScenario(e.currentTarget.value)}><option value="session">Session · coding harness</option><option value="authoring">Create a workflow or tool</option><option value="package">Import a workflow or external tool</option></select>
+  <select id="scenario" value={scenario} onchange={e=>changeScenario(e.currentTarget.value)}><option value="session">Session · coding harness</option><option value="workflow">Run a workflow</option><option value="authoring">Create a workflow or tool</option><option value="package">Import a workflow or external tool</option></select>
   {#if scenario==='authoring'}
    <fieldset class="choice-set"><legend>What are you creating?</legend>
     <div class="kind-choice" role="group" aria-label="What are you creating?"><button type="button" class:selected={authoringType==='workflow'} aria-pressed={authoringType==='workflow'} onclick={()=>authoringType='workflow'}>Workflow</button><button type="button" class:selected={authoringType==='tool'} aria-pressed={authoringType==='tool'} onclick={()=>authoringType='tool'}>Tool</button></div>
@@ -117,6 +184,29 @@
    <select id="agent" bind:value={agent}>{#if !harnesses.length}<option value="">{harnessesLoading?'Checking installed agents…':'No supported agents found'}</option>{/if}{#each harnesses as harness}<option value={harness.id}>{harness.id}</option>{/each}</select>
    {#if harnessesLoading&&harnesses.length}<p class="hint refresh">Refreshing agent list…</p>{/if}
    {#if scenario==='session'}<label for="prompt">First message</label><textarea id="prompt" bind:this={firstMessage} rows="5" bind:value={message} placeholder="optional"></textarea>{/if}
+  {:else if scenario==='workflow'}
+   <label for="workflow">Workflow</label>
+   <select id="workflow" value={workflowID} onchange={e=>selectWorkflow(e.currentTarget.value)}>
+    <option value="">{workflowLoading?'Checking workflows…':workflows.length?'Select a workflow':'No ready workflows'}</option>
+    {#each workflows as workflow (workflow.id)}
+     <option value={workflow.id}>{workflow.id} · {workflow.version}</option>
+    {/each}
+   </select>
+   {#if selectedWorkflow}
+    {#each selectedWorkflow.form.fields as field (field.name)}
+     <label for={'workflow-input-'+field.name}>{field.name}{field.required?' *':''}</label>
+     {#if field.type==='boolean'}
+      <select id={'workflow-input-'+field.name} value={displayValue(field)} onchange={e=>workflowInputs[field.name]=e.currentTarget.value===''?undefined:e.currentTarget.value==='true'}>
+       <option value="">Select…</option><option value="true">Yes</option><option value="false">No</option>
+      </select>
+     {:else}
+      <input id={'workflow-input-'+field.name} type={field.type==='number'||field.type==='integer'?'number':'text'}
+       step={field.type==='number'?'any':undefined} value={displayValue(field)} oninput={e=>workflowInputs[field.name]=e.currentTarget.value}/>
+     {/if}
+    {/each}
+    <label for="repo">Working folder</label>
+    <input id="repo" bind:value={repo} placeholder="Optional working folder"/>
+   {/if}
   {:else}
    <label for="repo">Package directory</label>
    <input id="repo" bind:this={folder} bind:value={repo} list="repos" placeholder="Directory containing workflow.yaml or tool.yaml" oninput={()=>review=undefined}/>
@@ -126,7 +216,7 @@
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
   <div class="buttons"><small>⌘↩ submits · esc cancels</small><button type="button" onclick={close}>Cancel</button>
-   <button class="primary" disabled={busy||!ready||((scenario==='session'||scenario==='authoring')&&(!harnesses.length||!harnesses.some(x=>x.id===agent)))||(scenario==='authoring'&&!idea.trim())||(scenario==='package'&&!repo.trim())}>{busy?'Working…':scenario==='package'?review?.valid?'Import':'Validate':'Create'}</button></div>
+   <button class="primary" disabled={busy||!ready||(scenario==='workflow'&&!selectedWorkflow)||((scenario==='session'||scenario==='authoring')&&(!harnesses.length||!harnesses.some(x=>x.id===agent)))||(scenario==='authoring'&&!idea.trim())||(scenario==='package'&&!repo.trim())}>{busy?'Working…':scenario==='package'?review?.valid?'Import':'Validate':'Create'}</button></div>
  </form>
 </div>
 <style>

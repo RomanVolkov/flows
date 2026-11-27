@@ -38,12 +38,12 @@ type App struct {
 	terminals       sync.Map
 	nativeTerminals sync.Map
 	home            paths.Home
-	ctx       context.Context
-	mu        sync.Mutex
-	file      string
-	followMu  sync.Mutex
-	unfollow  context.CancelFunc
-	followID  uint64
+	ctx             context.Context
+	mu              sync.Mutex
+	file            string
+	followMu        sync.Mutex
+	unfollow        context.CancelFunc
+	followID        uint64
 }
 
 type workspaceState struct {
@@ -95,7 +95,7 @@ func (a *App) Request(action, payload string) (string, error) {
 		}
 		path += "?" + query.Encode()
 		payload = ""
-	case "workspace", "settings", "harnesses", "sessions", "library":
+	case "workspace", "settings", "harnesses", "sessions", "library", "workflows":
 		path = "/v1/" + action
 	case "stopSession":
 		method, path = http.MethodPost, "/v1/sessions/"+url.PathEscape(payload)+"/stop"
@@ -111,6 +111,8 @@ func (a *App) Request(action, payload string) (string, error) {
 		payload = ""
 	case "saveSettings":
 		method, path = http.MethodPatch, "/v1/settings"
+	case "runWorkflow":
+		method, path = http.MethodPost, "/v1/workflows/run"
 	case "newSession":
 		method, path = http.MethodPost, "/v1/runs"
 	case "previewPackage":

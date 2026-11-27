@@ -132,3 +132,50 @@ for (const kind of ['Workflow', 'Tool']) {
     expect(prompt).toContain('Their main idea: Review open merge requests')
   })
 }
+
+test('launches a ready imported workflow with typed inputs', async ({ page, launch }) => {
+  await launch(running)
+  await page.getByRole('button', { name: /New session/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'New session' })
+  await dialog.getByLabel('Scenario').selectOption('workflow')
+  const workflow = dialog.getByLabel('Workflow', { exact: true })
+  await expect(workflow.getByRole('option')).toHaveText(['Select a workflow', 'external-review · 1.0.0'])
+  await workflow.selectOption('external-review')
+  await dialog.getByLabel('limit').fill('7')
+  await dialog.getByLabel('drafts').selectOption('false')
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'runWorkflow')?.args[0])
+  expect(JSON.parse(String(body))).toMatchObject({
+    workflow_id: 'external-review', expected_digest: 'first-revision', work_dir: '/repo',
+    inputs: { limit: 7, drafts: false },
+  })
+})
+
+test('refreshes the launcher when a selected workflow becomes stale', async ({ page, launch }) => {
+  await launch()
+  await page.evaluate(() => {
+    const app = window.go.main.App
+    const request = app.Request
+    let stale = false
+    app.Request = async (action, payload) => {
+      if (action === 'runWorkflow') {
+        stale = true
+        throw Error('Workflow changed since it was selected')
+      }
+      if (action === 'workflows' && stale) return JSON.stringify({ workflows: [], preparing: false })
+      return request(action, payload)
+    }
+  })
+  await page.getByRole('button', { name: /New session/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'New session' })
+  await dialog.getByLabel('Scenario').selectOption('workflow')
+  const workflow = dialog.getByLabel('Workflow', { exact: true })
+  await workflow.selectOption('external-review')
+  await dialog.getByLabel('limit').fill('7')
+  await dialog.getByLabel('drafts').selectOption('true')
+  await dialog.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(dialog.getByRole('alert')).toHaveText(/Workflow changed/)
+  await expect(workflow.getByRole('option')).toHaveText(['No ready workflows'])
+  await expect(dialog.getByRole('button', { name: 'Create', exact: true })).toBeDisabled()
+})

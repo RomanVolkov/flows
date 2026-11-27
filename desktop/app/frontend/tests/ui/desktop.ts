@@ -50,6 +50,11 @@ function installBridge(config: { initial: Snapshot; native?: boolean }) {
     harnesses: [{ id: 'codex', version: '1' }],
     usage: { requests: 0, uncached_input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 },
     library: { entries: [] },
+    workflows: { preparing: false, workflows: [
+      { id: 'external-review', version: '1.0.0', digest: 'first-revision', path: '/workflow', origin: 'user',
+        form: { fields: [{ name: 'limit', type: 'integer', required: true }, { name: 'drafts', type: 'boolean', required: true }] } },
+    ] },
+    runWorkflow: { node_id: 'node-1', run_id: 'run-1', status: 'ready' },
     newSession: { node_id: 'node-1' },
   }
   function frame(kind: number, payload: unknown) {
