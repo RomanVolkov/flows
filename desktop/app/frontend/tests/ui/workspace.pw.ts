@@ -16,6 +16,7 @@ test('creates a session with the selected harness, folder and prompt', async ({ 
   await page.keyboard.press('Meta+n')
   const dialog = page.getByRole('dialog', { name: 'New session' })
   await expect(dialog.getByLabel('Agent')).toHaveValue('codex')
+  await expect(dialog.getByLabel('First message')).toBeFocused()
   await dialog.getByLabel('Repo', { exact: true }).fill('/work/example')
   await dialog.getByLabel('First message').fill('Review the diff')
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()

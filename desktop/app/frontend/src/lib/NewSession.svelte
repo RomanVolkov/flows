@@ -11,6 +11,7 @@
  let harnesses=$state<{id:string;version:string}[]>([])
  const harnessCacheKey='flows.available-harnesses.v1'
  let folder=$state<HTMLInputElement>()
+ let firstMessage=$state<HTMLTextAreaElement>()
  let listOpen=$state(false), pick=$state(-1)
  const matches=$derived(history.filter(path=>path.toLowerCase().includes(repo.trim().toLowerCase())))
  function choose(path:string){repo=path;listOpen=false;pick=-1}
@@ -42,9 +43,15 @@
    try{localStorage.setItem(harnessCacheKey,JSON.stringify(detected))}catch{}
    harnessesLoading=false;chooseAgent()
   }).catch(e=>{if(active){harnessesLoading=false;if(!harnesses.length)error=String(e)}})
+  const focusInitial = () => {
+   const target = scenario === 'session' ? (firstMessage ?? folder) : folder
+   const dialog = target?.closest('.dialog')
+   if (target && (!dialog || !dialog.contains(document.activeElement))) target.focus()
+  }
+  void tick().then(() => { if (active) focusInitial() })
   void request<{default_harness:string;default_directory?:string}>('settings').then(async config=>{
    if(!active)return
-   preferred=config.default_harness;repo=config.default_directory??'';chooseAgent();ready=true;await tick();folder?.focus()
+   preferred=config.default_harness;repo=config.default_directory??'';chooseAgent();ready=true;await tick();focusInitial()
   }).catch(e=>{if(active)error=String(e)})
   return()=>{active=false}
  })
@@ -109,7 +116,7 @@
    <label for="agent">Agent</label>
    <select id="agent" bind:value={agent}>{#if !harnesses.length}<option value="">{harnessesLoading?'Checking installed agents…':'No supported agents found'}</option>{/if}{#each harnesses as harness}<option value={harness.id}>{harness.id}</option>{/each}</select>
    {#if harnessesLoading&&harnesses.length}<p class="hint refresh">Refreshing agent list…</p>{/if}
-   {#if scenario==='session'}<label for="prompt">First message</label><textarea id="prompt" rows="5" bind:value={message} placeholder="optional"></textarea>{/if}
+   {#if scenario==='session'}<label for="prompt">First message</label><textarea id="prompt" bind:this={firstMessage} rows="5" bind:value={message} placeholder="optional"></textarea>{/if}
   {:else}
    <label for="repo">Package directory</label>
    <input id="repo" bind:this={folder} bind:value={repo} list="repos" placeholder="Directory containing workflow.yaml or tool.yaml" oninput={()=>review=undefined}/>
