@@ -61,25 +61,47 @@ func TerminalOSC() string {
 
 // GhosttyConfig renders the Ghostty surface configuration string for the terminal dock.
 // Supported mappings on Ghostty 1.4.0 libghostty surface:
-//   - font-family, font-size, window-padding-x/y, cursor-style, cursor-style-blink
+//   - font-family, font-size, window-padding-x/y, cursor-style, cursor-style-blink, cursor-color, cursor-text
 //   - background, foreground, selection-background, selection-foreground, palette 0..15
 //   - background-opacity (0.90) and background-blur (true on macOS NSVisualEffectView/Metal)
 //   - cursor-trail is not a built-in Ghostty 1.4 config key and is omitted.
 func GhosttyConfig() string {
+	return GhosttyConfigWith(FontFamily, TerminalFontSizePt, TerminalOpacity, TerminalBlur, TerminalPaddingPt, TerminalPaddingPt)
+}
+
+// GhosttyConfigWith renders the Ghostty configuration string using the supplied font, opacity, and padding values.
+func GhosttyConfigWith(fontFamily string, fontSize int, opacity float64, blur bool, padX, padY int) string {
+	if fontFamily == "" || fontFamily == "Iosevka Mono" {
+		fontFamily = FontFamily
+	}
+	if fontSize <= 0 {
+		fontSize = TerminalFontSizePt
+	}
+	if opacity <= 0 || opacity > 1 {
+		opacity = TerminalOpacity
+	}
+	if padX < 0 {
+		padX = TerminalPaddingPt
+	}
+	if padY < 0 {
+		padY = TerminalPaddingPt
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "font-family = %s\n", FontFamily)
-	fmt.Fprintf(&b, "font-size = %d\n", TerminalFontSizePt)
-	fmt.Fprintf(&b, "window-padding-x = %d\n", TerminalPaddingPt)
-	fmt.Fprintf(&b, "window-padding-y = %d\n", TerminalPaddingPt)
+	fmt.Fprintf(&b, "font-family = %s\n", fontFamily)
+	fmt.Fprintf(&b, "font-size = %d\n", fontSize)
+	fmt.Fprintf(&b, "window-padding-x = %d\n", padX)
+	fmt.Fprintf(&b, "window-padding-y = %d\n", padY)
 	fmt.Fprintf(&b, "cursor-style = %s\n", TerminalCursorStyle)
 	fmt.Fprintf(&b, "cursor-style-blink = true\n")
+	fmt.Fprintf(&b, "cursor-color = %s\n", TerminalCursor)
+	fmt.Fprintf(&b, "cursor-text = %s\n", TerminalBackground)
 	fmt.Fprintf(&b, "bell-features = no-attention,no-system,no-audio\n")
 	fmt.Fprintf(&b, "background = %s\n", TerminalBackground)
 	fmt.Fprintf(&b, "foreground = %s\n", TerminalForeground)
 	fmt.Fprintf(&b, "selection-background = %s\n", TerminalSelectionBg)
 	fmt.Fprintf(&b, "selection-foreground = %s\n", TerminalSelectionFg)
-	fmt.Fprintf(&b, "background-opacity = %.2f\n", TerminalOpacity)
-	fmt.Fprintf(&b, "background-blur = true\n")
+	fmt.Fprintf(&b, "background-opacity = %.2f\n", opacity)
+	fmt.Fprintf(&b, "background-blur = %t\n", blur)
 	for i, c := range ANSI16 {
 		fmt.Fprintf(&b, "palette = %d=%s\n", i, c)
 	}

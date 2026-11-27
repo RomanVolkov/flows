@@ -8,7 +8,8 @@ package main
 #include <stdbool.h>
 #include <stdint.h>
 
-bool flowsNativeTerminalOpen(const char *id, const char *exe, const char *socketPath, const char *sessionID, const char *nonce, double x, double y, double width, double height, float fontSize);
+bool flowsNativeTerminalOpen(const char *id, const char *exe, const char *socketPath, const char *sessionID, const char *nonce, const char *configText, double x, double y, double width, double height, float fontSize);
+void flowsNativeTerminalApplyConfig(const char *configText);
 bool flowsNativeTerminalSetBounds(const char *id, double x, double y, double width, double height);
 bool flowsNativeTerminalFocus(const char *id);
 bool flowsNativeTerminalClaimInput(const char *id);
@@ -91,7 +92,13 @@ func nativeTerminalSupported() bool {
 	return os.Getenv("FLOWS_TERMINAL_RENDERER") != "canvas"
 }
 
-func openNativeTerminal(a *App, id, socketPath, sessionID, nonce string, x, y, width, height, fontSize float64) error {
+func applyNativeTerminalConfig(configText string) {
+	ccfg := C.CString(configText)
+	defer C.free(unsafe.Pointer(ccfg))
+	C.flowsNativeTerminalApplyConfig(ccfg)
+}
+
+func openNativeTerminal(a *App, id, socketPath, sessionID, nonce, configText string, x, y, width, height, fontSize float64) error {
 	if !nativeTerminalSupported() {
 		return ErrNativeTerminalUnavailable
 	}
@@ -99,10 +106,10 @@ func openNativeTerminal(a *App, id, socketPath, sessionID, nonce string, x, y, w
 	if err != nil {
 		return err
 	}
-	return openNativeTerminalWithExe(a, exe, id, socketPath, sessionID, nonce, x, y, width, height, fontSize)
+	return openNativeTerminalWithExe(a, exe, id, socketPath, sessionID, nonce, configText, x, y, width, height, fontSize)
 }
 
-func openNativeTerminalWithExe(a *App, exe, id, socketPath, sessionID, nonce string, x, y, width, height, fontSize float64) error {
+func openNativeTerminalWithExe(a *App, exe, id, socketPath, sessionID, nonce, configText string, x, y, width, height, fontSize float64) error {
 	if !nativeTerminalSupported() {
 		return ErrNativeTerminalUnavailable
 	}
@@ -115,15 +122,17 @@ func openNativeTerminalWithExe(a *App, exe, id, socketPath, sessionID, nonce str
 	csock := C.CString(socketPath)
 	csess := C.CString(sessionID)
 	cnonce := C.CString(nonce)
+	ccfg := C.CString(configText)
 	defer func() {
 		C.free(unsafe.Pointer(cid))
 		C.free(unsafe.Pointer(cexe))
 		C.free(unsafe.Pointer(csock))
 		C.free(unsafe.Pointer(csess))
 		C.free(unsafe.Pointer(cnonce))
+		C.free(unsafe.Pointer(ccfg))
 	}()
 
-	if !bool(C.flowsNativeTerminalOpen(cid, cexe, csock, csess, cnonce, C.double(x), C.double(y), C.double(width), C.double(height), C.float(fontSize))) {
+	if !bool(C.flowsNativeTerminalOpen(cid, cexe, csock, csess, cnonce, ccfg, C.double(x), C.double(y), C.double(width), C.double(height), C.float(fontSize))) {
 		nativeAppsMu.Lock()
 		delete(nativeApps, id)
 		nativeAppsMu.Unlock()

@@ -51,18 +51,21 @@ static NSRect flowsContentFrame(NSView *contentView, double x, double y, double 
     return NSMakeRect(x, frameY, w, h);
 }
 
-bool flowsNativeTerminalOpen(const char *cid, const char *cexe, const char *csocketPath, const char *csessionID, const char *cnonce, double x, double y, double width, double height, float fontSize) {
+bool flowsNativeTerminalOpen(const char *cid, const char *cexe, const char *csocketPath, const char *csessionID, const char *cnonce, const char *cconfigText, double x, double y, double width, double height, float fontSize) {
     NSString *viewID = [NSString stringWithUTF8String:cid];
     NSString *exe = [NSString stringWithUTF8String:cexe];
     NSString *socketPath = [NSString stringWithUTF8String:csocketPath];
     NSString *sessionID = [NSString stringWithUTF8String:csessionID];
     NSString *nonce = (cnonce && cnonce[0] != '\0') ? [NSString stringWithUTF8String:cnonce] : nil;
+    NSString *configText = (cconfigText && cconfigText[0] != '\0') ? [NSString stringWithUTF8String:cconfigText] : nil;
 
     __block BOOL opened = NO;
     runOnMainSync(^{
         NSWindow *window = flowsTargetWindow();
         NSView *contentView = window.contentView;
         if (!window || !contentView) return;
+
+        if (![FlowsGhosttyRuntime.sharedRuntime applyGhosttyConfig:configText]) return;
 
         TerminalView *existing = flowsNativeViews()[viewID];
         if (existing) {
@@ -73,7 +76,6 @@ bool flowsNativeTerminalOpen(const char *cid, const char *cexe, const char *csoc
 
         NSRect frame = flowsContentFrame(contentView, x, y, width, height);
         TerminalView *view = [[TerminalView alloc] initWithFrame:frame];
-        view.wantsLayer = YES;
 
         __weak TerminalView *weakView = view;
         view.onReady = ^{
@@ -113,11 +115,26 @@ bool flowsNativeTerminalOpen(const char *cid, const char *cexe, const char *csoc
             [view removeFromSuperview];
             return;
         }
+        if (view.layer) {
+            view.layer.cornerRadius = 7.0;
+            view.layer.maskedCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner;
+            view.layer.masksToBounds = YES;
+        }
         flowsNativeViews()[viewID] = view;
         [window makeFirstResponder:view];
         opened = YES;
     });
     return opened;
+}
+
+void flowsNativeTerminalApplyConfig(const char *cconfigText) {
+    NSString *configText = (cconfigText && cconfigText[0] != '\0') ? [NSString stringWithUTF8String:cconfigText] : nil;
+    if (configText.length == 0) return;
+    runOnMainSync(^{
+        if (FlowsGhosttyRuntime.sharedRuntime.app) {
+            [FlowsGhosttyRuntime.sharedRuntime applyGhosttyConfig:configText];
+        }
+    });
 }
 
 bool flowsNativeTerminalSetBounds(const char *cid, double x, double y, double width, double height) {

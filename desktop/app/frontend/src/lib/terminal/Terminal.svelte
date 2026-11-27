@@ -42,6 +42,11 @@
     return contentBounds(box.getBoundingClientRect(), $theme.padding + 4)
   }
 
+  function nativeBounds() {
+    const r = box.getBoundingClientRect()
+    return { x: r.left, y: r.top, width: Math.max(10, r.width), height: Math.max(10, r.height) }
+  }
+
   function redraw() {
     if (mode === 'native' || !metrics || !canvas) return
     const dpr = window.devicePixelRatio || 1
@@ -81,7 +86,7 @@
   function fitSize() {
     if (mode === 'native') {
       if (terminalId && api.SetNativeTerminalBounds) {
-        const b = boxBounds()
+        const b = nativeBounds()
         api.SetNativeTerminalBounds(terminalId, b.x, b.y, b.width, b.height).catch(() => {})
       }
       return
@@ -104,7 +109,7 @@
     async function connectNative(): Promise<boolean> {
       if (typeof api.OpenNativeTerminal !== 'function') return false
       try {
-        const b = boxBounds()
+        const b = nativeBounds()
         const id = await api.OpenNativeTerminal(sessionId, b.x, b.y, b.width, b.height, $theme.font_size)
         if (stopped) {
           await api.Detach(id).catch(() => {})
@@ -321,7 +326,7 @@
 </script>
 
 <div class="overlay" role="dialog" aria-label={title} data-renderer={mode}>
-  <div class="window">
+  <div class="window" class:native={mode === 'native'}>
     <header>
       <span>{displayTitle}</span>
       {#if displayScrolled > 0}<em>↑ {displayScrolled} lines back · type to return</em>{/if}
@@ -354,6 +359,9 @@
     display: flex; align-items: center; justify-content: center; z-index: 10; }
   .window { width: 88vw; height: 84vh; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
     display: flex; flex-direction: column; overflow: hidden; }
+  .window.native { background: transparent; }
+  .window.native header { background: var(--bg); }
+  .window.native .box { padding: 0; }
   header { display: flex; gap: 12px; align-items: center; height: 36px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--border-subtle); }
   header span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--mono);
     letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); }

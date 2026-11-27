@@ -1,5 +1,6 @@
 #import "TerminalView.h"
 #import <CoreGraphics/CoreGraphics.h>
+#import <CoreText/CoreText.h>
 #include <mach/mach_time.h>
 #include <errno.h>
 #include <sys/socket.h>
@@ -179,14 +180,56 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
     return instance;
 }
 
++ (void)registerBundledFontsOnce {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSURL *fontsDir = [NSBundle.mainBundle.resourceURL URLByAppendingPathComponent:@"fonts" isDirectory:YES];
+        if (!fontsDir) return;
+        NSArray<NSURL *> *items = [NSFileManager.defaultManager contentsOfDirectoryAtURL:fontsDir
+                                                              includingPropertiesForKeys:nil
+                                                                                 options:NSDirectoryEnumerationSkipsHiddenFiles
+                                                                                   error:nil];
+        for (NSURL *url in items) {
+            NSString *ext = url.pathExtension.lowercaseString;
+            if ([ext isEqualToString:@"ttf"] || [ext isEqualToString:@"otf"]) {
+                CTFontManagerRegisterFontsForURL((__bridge CFURLRef)url, kCTFontManagerScopeProcess, nil);
+            }
+        }
+    });
+}
+
+- (ghostty_config_t)buildConfig:(nullable NSString *)configText {
+    ghostty_config_t config = ghostty_config_new();
+    if (configText.length > 0) {
+        NSString *tmpPath = [NSTemporaryDirectory() stringByAppendingPathComponent:
+            [NSString stringWithFormat:@"flows-ghostty-%d.conf", getpid()]];
+        if ([configText writeToFile:tmpPath atomically:YES encoding:NSUTF8StringEncoding error:nil]) {
+            ghostty_config_load_file(config, tmpPath.UTF8String);
+            unlink(tmpPath.UTF8String);
+        }
+    }
+    ghostty_config_finalize(config);
+    return config;
+}
+
 - (BOOL)ensureInitialized {
-    if (self.app) return YES;
+    return [self applyGhosttyConfig:nil];
+}
+
+- (BOOL)applyGhosttyConfig:(nullable NSString *)configText {
+    [FlowsGhosttyRuntime registerBundledFontsOnce];
     if (!self.initialized) {
         if (ghostty_init(0, NULL) != 0) return NO;
         self.initialized = YES;
     }
-    ghostty_config_t config = ghostty_config_new();
-    ghostty_config_finalize(config);
+    if (self.app) {
+        if (configText.length == 0) return YES;
+        ghostty_config_t config = [self buildConfig:configText];
+        ghostty_app_update_config(self.app, config);
+        ghostty_config_free(config);
+        return YES;
+    }
+    ghostty_config_t config = [self buildConfig:configText];
     ghostty_runtime_config_s runtime = {
         .userdata = (__bridge void *)self,
         .wakeup_cb = wakeupCallback,

@@ -4,7 +4,9 @@ package main
 
 func nativeTerminalSupported() bool { return false }
 
-func openNativeTerminal(*App, string, string, string, string, float64, float64, float64, float64, float64) error {
+func applyNativeTerminalConfig(string) {}
+
+func openNativeTerminal(*App, string, string, string, string, string, float64, float64, float64, float64, float64) error {
 	return ErrNativeTerminalUnavailable
 }
 

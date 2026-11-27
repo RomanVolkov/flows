@@ -10,6 +10,7 @@ CONTENTS="${APP_DIR}/Contents"
 rm -rf "${APP_DIR}"
 mkdir -p "${CONTENTS}/MacOS" \
   "${CONTENTS}/Resources/bin" \
+  "${CONTENTS}/Resources/fonts" \
   "${CONTENTS}/Resources/plugins" \
   "${CONTENTS}/Resources/workflows" \
   "${CONTENTS}/Resources/spec/v1" \
@@ -34,6 +35,7 @@ for name in flows-host; do
 done
 make desktop
 cp desktop/app/frontend/src/assets/fonts/iosevka-term/LICENSE.md "${CONTENTS}/Resources/licenses/IosevkaTermNerdFontMono.md"
+cp desktop/app/frontend/src/assets/fonts/iosevka-term/*.ttf "${CONTENTS}/Resources/fonts/"
 cp build/bin/Flows-desktop "${CONTENTS}/MacOS/Flows"
 
 # Prebuild shipped plugins so the packaged app runs without a compiler.

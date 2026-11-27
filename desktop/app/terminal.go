@@ -12,7 +12,9 @@ import (
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"github.com/romanvolkov/flows/desktop/theme"
 	"github.com/romanvolkov/flows/internal/client"
+	"github.com/romanvolkov/flows/internal/config"
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/localapi"
 )
@@ -36,6 +38,24 @@ func (a *App) lookupSession(attempt string) (localapi.SessionSummary, error) {
 	return localapi.SessionSummary{}, errors.New("this session has no attached host")
 }
 
+func (a *App) nativeTerminalConfig() string {
+	settings := config.DefaultSettings()
+	if a.home.State != "" {
+		if loaded, err := config.LoadSettings(a.home.Settings()); err == nil {
+			settings = loaded
+		}
+	}
+	pad := theme.TerminalPaddingPt + 4
+	return theme.GhosttyConfigWith(
+		settings.Terminal.FontFamily,
+		settings.Terminal.FontSize,
+		settings.Terminal.Opacity,
+		settings.Terminal.Blur,
+		pad,
+		pad,
+	)
+}
+
 func (a *App) OpenNativeTerminal(attempt string, x, y, width, height, fontSize float64) (string, error) {
 	if !nativeTerminalSupported() {
 		return "", ErrNativeTerminalUnavailable
@@ -45,7 +65,7 @@ func (a *App) OpenNativeTerminal(attempt string, x, y, width, height, fontSize f
 		return "", err
 	}
 	id := rand.Text()
-	if err := openNativeTerminal(a, id, s.SocketPath, s.SessionID, s.StartNonce, x, y, width, height, fontSize); err != nil {
+	if err := openNativeTerminal(a, id, s.SocketPath, s.SessionID, s.StartNonce, a.nativeTerminalConfig(), x, y, width, height, fontSize); err != nil {
 		return "", err
 	}
 	a.nativeTerminals.Store(id, struct{}{})

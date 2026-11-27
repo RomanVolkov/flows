@@ -137,6 +137,9 @@ func (a *App) Request(action, payload string) (string, error) {
 	defer c.Close()
 	var out json.RawMessage
 	err = c.JSON(ctx, method, path, payload, &out)
+	if err == nil && action == "saveSettings" {
+		applyNativeTerminalConfig(a.nativeTerminalConfig())
+	}
 	return string(out), err
 }
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }

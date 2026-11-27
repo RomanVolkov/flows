@@ -26,6 +26,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)sharedRuntime;
 @property(nonatomic, readonly, nullable) ghostty_app_t app;
 - (BOOL)ensureInitialized;
+- (BOOL)applyGhosttyConfig:(nullable NSString *)configText;
 - (void)shutdown;
 @end
 
