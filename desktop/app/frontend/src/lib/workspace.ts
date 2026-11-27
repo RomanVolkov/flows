@@ -35,6 +35,12 @@ export interface RunWorkflowRequest {
 export interface RunWorkflowResponse {
   node_id:string; run_id:string; status:string
 }
+export interface PendingQuestion {
+  id:string; prompt:string; options?:string[]
+}
+export interface PendingNotification {
+  node_id:string; question?:PendingQuestion
+}
 export interface FlowNode {
   id:string; name:string; kind:string; status:string; run_id:string; parent_id?:string; attempt_id?:string;
   detail?:string;
@@ -57,6 +63,6 @@ export function graphOf(w:Workspace, live:LiveSession[] = []) {
   const sessions=[...live.flatMap(s=>{const nodeID=attemptNodes.get(s.attempt_id),attempt=attemptsByID.get(s.attempt_id);if(!nodeID||!attempt)return[];const agent=s.command.split('/').pop()??'harness';return[{id:s.session_id,attempt:s.attempt_id,node:nodeID,agent,mode:'pty' as const,dir:s.work_dir,pid:s.child?.pid,started:new Date(attempt.started_at/1e6).toISOString(),exit:ended(attempt.status)?0:undefined,tag:attempt.status}]}),...attempts.filter(a=>!tracked.has(a.id)).flatMap(a=>{const node=nodes.find(n=>n.id===a.node_id);if(!node||node.kind!=='session')return[];return[{id:`attempt:${a.id}`,attempt:a.id,node:a.node_id,agent:node.name||'harness',mode:'pty' as const,dir:'',started:new Date(a.started_at/1e6).toISOString(),exit:ended(a.status)?0:undefined,tag:a.status}]})]
   return fromSnapshot({seq:w.cursor,sessions,nodes:nodes.map(n=>({
     id:n.id,title:n.name||n.id,kind:kinds[n.kind]??'step',state:states[n.status]??'pending',
-    label:n.kind+' · '+n.status.replaceAll('_',' '),parent:n.parent_id,detail:n.detail,created:'',updated:''})),
+    label:n.kind+' · '+n.status.replaceAll('_',' '),parent:n.parent_id,detail:n.detail,questionId:n.wait?.kind==='human'?n.wait.ref:undefined,created:'',updated:''})),
     edges:(w.edges??[]).map(e=>({from:e.from_id,to:e.to_id,reason:e.milestone}))})
 }

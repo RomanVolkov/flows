@@ -12,6 +12,7 @@ export interface Node {
   state: State
   label?: string
   detail?: string
+  questionId?: string
   parent?: string
   flow?: string
   created: string

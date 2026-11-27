@@ -9,24 +9,29 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 )
 
 var ErrAlreadyAnswered = errors.New("question already answered")
+var ErrInvalidAnswer = errors.New("answer is empty or is not one of the question choices")
+var questionIDPattern = regexp.MustCompile(`^q-[0-9a-f]{16}$`)
 
 // Notification is a user-facing alert with a deep link to the originating node.
 type Notification struct {
-	ID         string `json:"id"`
-	RunID      string `json:"run_id"`
-	NodeID     string `json:"node_id"`
-	AttemptID  string `json:"attempt_id,omitempty"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	DeepLink   string `json:"deep_link"`
-	QuestionID string `json:"question_id,omitempty"`
-	CreatedAt  int64  `json:"created_at"`
+	ID         string    `json:"id"`
+	RunID      string    `json:"run_id"`
+	NodeID     string    `json:"node_id"`
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	Title      string    `json:"title"`
+	Body       string    `json:"body"`
+	DeepLink   string    `json:"deep_link"`
+	QuestionID string    `json:"question_id,omitempty"`
+	Question   *Question `json:"question,omitempty"`
+	CreatedAt  int64     `json:"created_at"`
 }
 
 // Question is a persisted human-input prompt linked to a specific attempt.
@@ -106,27 +111,51 @@ func (c *NotificationCenter) AskAndNotify(runID, nodeID, attemptID, prompt strin
 	return q, n, nil
 }
 
-// AnswerOnce delivers an answer to questionID exactly once.
-func (c *NotificationCenter) AnswerOnce(questionID, answer string) (Question, error) {
+func (c *NotificationCenter) Question(id string) (Question, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	path := filepath.Join(c.questDir, questionID+".json")
-	data, err := os.ReadFile(path)
+	return c.readQuestion(id)
+}
+
+func (c *NotificationCenter) readQuestion(id string) (Question, error) {
+	if !questionIDPattern.MatchString(id) {
+		return Question{}, os.ErrNotExist
+	}
+	data, err := os.ReadFile(filepath.Join(c.questDir, id+".json"))
 	if err != nil {
 		return Question{}, err
 	}
 	var q Question
-	if err := json.Unmarshal(data, &q); err != nil {
+	err = json.Unmarshal(data, &q)
+	return q, err
+}
+
+// AnswerOnce delivers an answer to questionID exactly once.
+func (c *NotificationCenter) AnswerOnce(questionID, answer string) (Question, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	q, err := c.readQuestion(questionID)
+	if err != nil {
 		return Question{}, err
 	}
 	if q.Answered {
 		return Question{}, fmt.Errorf("%w: %s", ErrAlreadyAnswered, questionID)
 	}
+	answer = strings.TrimSpace(answer)
+	if answer == "" || len(q.Options) > 0 && !slices.Contains(q.Options, answer) {
+		return Question{}, ErrInvalidAnswer
+	}
+	path := filepath.Join(c.questDir, questionID+".json")
 	q.Answered = true
 	q.Answer = answer
 	q.AnsweredAt = time.Now().UnixNano()
 	updated, _ := json.MarshalIndent(q, "", "  ")
-	if err := os.WriteFile(path, updated, 0600); err != nil {
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, updated, 0600); err != nil {
+		return Question{}, err
+	}
+	defer os.Remove(temp)
+	if err := os.Rename(temp, path); err != nil {
 		return Question{}, err
 	}
 	return q, nil

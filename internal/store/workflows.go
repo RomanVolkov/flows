@@ -209,7 +209,7 @@ func (s *Store) FinishWorkflowNode(ctx context.Context, nodeID string, status St
 		if err != nil {
 			return err
 		}
-		if node.Status != Running && node.Status != Stopping && !(status == Cancelled || status == Skipped) {
+		if node.Status != Running && node.Status != Stopping && node.Status != WaitingForInput && !(status == Cancelled || status == Skipped) {
 			return fmt.Errorf("%w: workflow node %s from %s", ErrTransition, nodeID, node.Status)
 		}
 		if err := tx.updateNode(ctx, &node, status, nil); err != nil {

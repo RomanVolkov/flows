@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/romanvolkov/flows/internal/builtin"
+	"github.com/romanvolkov/flows/internal/engine"
 	"github.com/romanvolkov/flows/internal/paths"
 	"github.com/romanvolkov/flows/internal/store"
 )
@@ -60,7 +62,15 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	if err := state.MarkUnfinishedRunsInterrupted(ctx); err != nil {
 		return fmt.Errorf("mark interrupted workflows: %w", err)
 	}
-	workflows := &workflowRunner{ctx: ctx, state: state, runs: runs, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
+	notifications, err := builtin.NewNotificationCenter(home.State)
+	if err != nil {
+		return err
+	}
+	watches, err := engine.OpenWatchStore(filepath.Join(home.State, "watches"))
+	if err != nil {
+		return err
+	}
+	workflows := &workflowRunner{ctx: ctx, state: state, runs: runs, notifications: notifications, watches: watches, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
 	defer workflows.wg.Wait()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
@@ -127,12 +137,13 @@ func listen(path string) (*net.UnixListener, error) {
 func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager, home paths.Home, libraryWorker *libraryReconciler, workflows *workflowRunner) http.Handler {
 	var harnesses harnessCache
 	usageHandler := UsageHandler(state, home)
+	questions := QuestionsHandler(workflows.notifications, workflows.questionActive)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && r.URL.Path != "/v1/workflows/result" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && r.URL.Path != "/v1/workflows/result" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") && !strings.HasPrefix(r.URL.Path, "/v1/questions/") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -170,6 +181,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			}
 		case "/v1/runs":
 			handleRuns(w, r, runs)
+		case "/v1/notifications":
+			questions(w, r)
 		case "/v1/workflows/result":
 			workflows.submitHarnessResult(w, r)
 		case "/v1/workflows", "/v1/workflows/run":
@@ -195,6 +208,10 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/v1/questions/") {
+				questions(w, r)
+				return
+			}
 			if nodeID, ok := strings.CutPrefix(r.URL.Path, "/v1/nodes/"); ok {
 				for _, action := range []string{"stop", "remove", "resume"} {
 					if id, matched := strings.CutSuffix(nodeID, "/"+action); matched && id != "" {

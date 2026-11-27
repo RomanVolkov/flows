@@ -1,6 +1,6 @@
 <script lang="ts">
  import type {Graph} from './graph'
- import {request} from './workspace'
+ import {request, type PendingQuestion, type PendingNotification} from './workspace'
  import {copy} from './copy'
  import TotalsView from './TotalsView.svelte'
  import Preview from './Preview.svelte'
@@ -9,15 +9,37 @@
  let {graph,selected,onattach,onremove}:{graph:Graph;selected:string;onattach:(id:string)=>void;onremove:(id:string)=>void}=$props()
  const node=$derived(graph.nodes.get(selected))
  let totals=$state<Totals>(), error=$state(''), busy=$state(false)
+ let question=$state<PendingQuestion>(), answer=$state('')
+ const approval=$derived(question?.options?.length===2&&question.options.includes('approve')&&question.options.includes('reject'))
  const sessions=$derived([...graph.sessions.values()].filter(s=>s.node===selected).sort((a,b)=>a.started.localeCompare(b.started)))
  const live=$derived(sessions.some(s=>s.exit==null))
  const stoppable=$derived(live||node?.state==='running'||node?.state==='blocked')
- const resumable=$derived(node?.state==='stopped'||node?.label?.includes('interrupted')||node?.label?.includes('failed'))
+ const resumable=$derived(node?.kind==='session'&&!node.parent&&(node.state==='stopped'||node.label?.includes('interrupted')||node.label?.includes('failed')))
  async function stop(){
   busy=true;error=''
   try{await request('stopNode',selected)}catch(e){error=String(e)}finally{busy=false}
  }
  async function resume(){busy=true;error='';try{await request('resumeNode',selected)}catch(e){error=String(e)}finally{busy=false}}
+ async function answerQuestion(value:string){
+  if(!question||busy||!value.trim())return
+  const id=question.id
+  busy=true;error=''
+  try{
+   await request('answerQuestion',JSON.stringify({id,answer:value.trim()}))
+   if(question?.id===id)question=undefined
+  }catch(e){error=String(e)}finally{busy=false}
+ }
+ $effect(()=>{
+  const id=node?.questionId
+  const nodeId=selected
+  let gone=false
+  question=undefined;answer=''
+  if(!id)return
+  void request<PendingNotification[]>('notifications').then(notifications=>{
+   if(!gone)question=notifications.find(n=>n.node_id===nodeId&&n.question?.id===id)?.question
+  }).catch(e=>{if(!gone)error=String(e)})
+  return()=>{gone=true}
+ })
  $effect(()=>{const id=selected;let gone=false;totals=undefined;fetchTotals('',id).then(t=>{if(!gone)totals=t},e=>{if(!gone)error=String(e)});return()=>{gone=true}})
 </script>
 <aside>{#if node}
@@ -25,6 +47,21 @@
  <p class="state mono">{node.state}{node.label?` · ${node.label}`:''}</p>
  <dl><dt class="label">kind</dt><dd class="mono">{node.kind}</dd>{#if node.flow}<dt class="label">workflow</dt><dd class="mono" use:copy>{node.flow}</dd>{/if}<dt class="label">id</dt><dd class="mono" use:copy>{node.id}</dd></dl>
  {#if node.detail}<pre class="block">{node.detail}</pre>{/if}
+ {#if question}
+  <section class="question" aria-label="Workflow question">
+   <h3 class="label">{approval?'Approval requested':'Input requested'}</h3>
+   <p>{question.prompt}</p>
+   {#if approval}
+    <div class="question-actions"><button disabled={busy} onclick={()=>answerQuestion('reject')}>Reject</button><button class="primary" disabled={busy} onclick={()=>answerQuestion('approve')}>Approve</button></div>
+   {:else if question.options?.length}
+    <div class="question-actions">{#each question.options as option}<button disabled={busy} onclick={()=>answerQuestion(option)}>{option}</button>{/each}</div>
+   {:else}
+    <form class="question-actions" onsubmit={e=>{e.preventDefault();void answerQuestion(answer)}}>
+     <input aria-label="Answer" bind:value={answer}/><button class="primary" disabled={busy||!answer.trim()}>Answer</button>
+    </form>
+   {/if}
+  </section>
+ {/if}
  {#each graph.edges.filter(e=>e.from===node.id||e.to===node.id) as edge}
   <p class="edge mono" use:copy={edge.to===node.id?edge.from:edge.to}>{edge.to===node.id?`← waits for ${edge.from}`:`→ needed by ${edge.to}`}{edge.reason?` · ${edge.reason}`:''}</p>
  {/each}
@@ -42,6 +79,9 @@
  {#if error}<p class="error">{error}</p>{/if}
  {:else}<p class="hint label">Select a node</p>{/if}</aside>
 <style>
+ .question{display:grid;gap:8px;padding:10px;margin:10px 0;border:1px solid var(--border);border-radius:var(--radius)}
+ .question p{white-space:pre-wrap;margin:0}.question-actions{display:flex;flex-wrap:wrap;gap:5px}.question-actions input{min-width:0;flex:1}
+
  aside{width:440px;flex:none;margin:8px 8px 8px 0;padding:14px;overflow:auto;background:var(--elevated);border:1px solid var(--border-subtle);border-radius:var(--radius);font-size:13px}
  header{display:flex;align-items:center;gap:10px}h2{flex:1;font:600 15px var(--sans);overflow-wrap:anywhere}.dot{width:8px;height:8px;border-radius:50%;flex:none}
  .state{margin:4px 0 0 18px;color:var(--text-2);font-size:12px}dl{display:grid;grid-template-columns:3.5rem 1fr;gap:4px 10px;margin:14px 0;align-items:baseline}dd{overflow-wrap:anywhere;color:var(--text-2);font-size:12px}

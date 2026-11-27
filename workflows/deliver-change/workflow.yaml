@@ -39,6 +39,8 @@ nodes:
     uses: core.notify
     needs: [group_work]
     with:
+      approval: true
+      auto_approve: ${{ inputs.auto_approve }}
       title: Approve Task Groups
       body: Review proposed task groups for ${{ inputs.request }}
   plan_group:

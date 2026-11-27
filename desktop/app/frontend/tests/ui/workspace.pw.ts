@@ -245,3 +245,33 @@ test('renders adaptive workflow controls and reports missing required inputs', a
     directory: '/recent', provider: 'gitlab', mode: 'two', repositories: ['/recent'],
   })
 })
+
+test('answers a pending workflow approval from the Canvas inspector', async ({ page, launch }) => {
+  const snapshot = {
+    workspace: { cursor: 1, nodes: [{ id: 'approval', name: 'Approve the change', kind: 'tool',
+      status: 'waiting_for_input', run_id: 'run', wait: { kind: 'human', ref: 'question' } }], edges: [], attempts: [] },
+    sessions: [],
+  }
+  await launch(snapshot)
+  await page.evaluate(() => {
+    const app = window.go.main.App
+    const request = app.Request
+    app.Request = async (action, payload) => {
+      if (action === 'notifications') return JSON.stringify([{ node_id: 'approval', question: {
+        id: 'question', prompt: 'Continue with the requested change?', options: ['approve', 'reject'],
+      } }])
+      if (action === 'answerQuestion') {
+        window.mockDesktop.calls.push({ action, args: [payload] })
+        return '{}'
+      }
+      return request(action, payload)
+    }
+  })
+  await page.keyboard.press('ArrowRight')
+  const question = page.getByRole('region', { name: 'Workflow question' })
+  await expect(question.getByText('Continue with the requested change?')).toBeVisible()
+  await question.getByRole('button', { name: 'Approve', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'answerQuestion')?.args[0])
+  expect(JSON.parse(String(body))).toEqual({ id: 'question', answer: 'approve' })
+})

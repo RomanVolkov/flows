@@ -2,12 +2,17 @@ package localapi
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/romanvolkov/flows/internal/builtin"
+	"github.com/romanvolkov/flows/internal/engine"
 	"github.com/romanvolkov/flows/internal/store"
 )
 
@@ -24,7 +29,15 @@ func workflowRunnerFixture(t *testing.T, definition string) (*workflowRunner, *s
 	}
 	t.Cleanup(func() { state.Close() })
 	worker := newLibraryReconciler(home)
-	runner := &workflowRunner{ctx: ctx, state: state, library: worker, cancellations: make(map[string]context.CancelFunc)}
+	notifications, err := builtin.NewNotificationCenter(home.State)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watches, err := engine.OpenWatchStore(filepath.Join(home.State, "watches"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &workflowRunner{ctx: ctx, state: state, library: worker, notifications: notifications, watches: watches, cancellations: make(map[string]context.CancelFunc)}
 	t.Cleanup(func() { cancel(); runner.wg.Wait() })
 	return runner, state, dir
 }
@@ -33,10 +46,16 @@ func startFixtureWorkflow(t *testing.T, runner *workflowRunner, id string, input
 	t.Helper()
 	runner.library.reconcile(runner.ctx)
 	entries := runner.library.snapshot().Entries
-	if len(entries) != 1 || entries[0].Status != "ready" {
+	var digest string
+	for _, entry := range entries {
+		if entry.ID == "main-flow" && entry.Status == "ready" {
+			digest = entry.Digest
+		}
+	}
+	if digest == "" {
 		t.Fatalf("workflow was not prepared: %+v", entries)
 	}
-	req := workflowLaunchRequest{RequestID: id, WorkflowID: entries[0].ID, ExpectedDigest: entries[0].Digest, Inputs: inputs}
+	req := workflowLaunchRequest{RequestID: id, WorkflowID: "main-flow", ExpectedDigest: digest, Inputs: inputs}
 	spec, snap, err := runner.prepareLaunch(req)
 	if err != nil {
 		t.Fatal(err)
@@ -246,5 +265,142 @@ nodes:
 		if count != tc.occurrences {
 			t.Fatalf("%s executed %d occurrences", tc.id, count)
 		}
+	}
+}
+
+func TestWorkflowApprovalResumesOrStops(t *testing.T) {
+	runner, state, _ := workflowRunnerFixture(t, `schema: flows/v1
+id: main-flow
+version: 1.0.0
+inputs:
+  timeout: {type: string, default: 3s}
+nodes:
+  approve:
+    uses: core.notify
+    with:
+      approval: true
+      title: Approve the change
+      timeout: ${{ inputs.timeout }}
+  next:
+    uses: core.command
+    needs: [approve]
+    with: {command: /usr/bin/true}
+outputs:
+  approved: ${{ nodes.approve.outputs.approved }}
+`)
+	handler := QuestionsHandler(runner.notifications, runner.questionActive)
+	for _, tc := range []struct {
+		id, answer string
+		expected   store.Status
+	}{
+		{"yes", "approve", store.Succeeded},
+		{"no", "reject", store.Failed},
+	} {
+		run := startFixtureWorkflow(t, runner, tc.id, nil)
+		var question string
+		waitWorkflowFixture(t, runner.ctx, func() bool {
+			view, _ := state.Snapshot(runner.ctx)
+			for _, node := range view.Nodes {
+				if node.RunID == run.RunID && node.Status == store.WaitingForInput {
+					question = node.Wait.Ref
+					return true
+				}
+			}
+			return false
+		})
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(http.MethodPost, "/v1/questions/"+question+"/answer", strings.NewReader(`{"answer":"incorrect"}`)))
+		if rec.Code != 422 {
+			t.Fatalf("invalid answer status %d", rec.Code)
+		}
+		rec = httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(http.MethodPost, "/v1/questions/"+question+"/answer", strings.NewReader(`{"answer":"`+tc.answer+`"}`)))
+		if rec.Code != 200 {
+			t.Fatalf("answer was rejected: %s", rec.Body)
+		}
+		waitWorkflowFixture(t, runner.ctx, func() bool {
+			record, _ := state.WorkflowRunByRequest(runner.ctx, tc.id)
+			return record.Status == tc.expected
+		})
+	}
+	startFixtureWorkflow(t, runner, "timeout", map[string]any{"timeout": "30ms"})
+	waitWorkflowFixture(t, runner.ctx, func() bool {
+		record, _ := state.WorkflowRunByRequest(runner.ctx, "timeout")
+		return record.Status == store.Failed
+	})
+}
+
+func TestWorkflowWatchPersistsCursorAndCancellation(t *testing.T) {
+	runner, state, _ := workflowRunnerFixture(t, `schema: flows/v1
+id: main-flow
+version: 1.0.0
+inputs:
+  keep_watching: {type: boolean, default: false}
+nodes:
+  delay:
+    uses: core.wait
+    with: {duration: 10ms}
+  poll:
+    uses: fixture.poll
+    needs: [delay]
+    watch:
+      interval: 40ms
+      deadline: 3s
+      until: ${{ outputs.done }}
+    with:
+      keep_watching: ${{ inputs.keep_watching }}
+outputs:
+  count: ${{ nodes.poll.outputs.count }}
+`)
+	tool := filepath.Join(runner.library.home.Tools(), "fixture")
+	writePackageFile(t, tool, "tool.yaml", `schema: flows/tool/v1
+id: fixture
+version: 1.0.0
+operations:
+  - id: fixture.poll
+    description: Poll a fixture
+    execution_kind: plugin
+    read_only: true
+`)
+	bin := filepath.Join(tool, "fixture-plugin")
+	if err := os.WriteFile(bin, []byte(`#!/bin/sh
+read -r line
+case "$line" in
+  *describe*) printf '%s\n' '{"protocol":1,"kind":"manifest","manifest":{"protocol":1,"id":"fixture","version":"1.0.0","operations":[{"id":"fixture.poll","description":"Poll a fixture","read_only":true}]}}' ;;
+  *'"keep_watching":true'*) printf '%s\n' '{"protocol":1,"kind":"observation","observation":{"done":false,"cursor":"next","data":{"count":1}}}' ;;
+  *'"cursor":"next"'*) printf '%s\n' '{"protocol":1,"kind":"observation","observation":{"done":true,"cursor":"last","data":{"count":2}}}' ;;
+  *) printf '%s\n' '{"protocol":1,"kind":"observation","observation":{"done":false,"cursor":"next","data":{"count":1}}}' ;;
+esac
+`), 0700); err != nil {
+		t.Fatal(err)
+	}
+	startFixtureWorkflow(t, runner, "watch", nil)
+	waitWorkflowFixture(t, runner.ctx, func() bool {
+		record, _ := state.WorkflowRunByRequest(runner.ctx, "watch")
+		return record.Status == store.Succeeded && string(record.Outputs) == `{"count":2}`
+	})
+	run := startFixtureWorkflow(t, runner, "cancel", map[string]any{"keep_watching": true})
+	var watchID string
+	waitWorkflowFixture(t, runner.ctx, func() bool {
+		view, _ := state.Snapshot(runner.ctx)
+		for _, node := range view.Nodes {
+			if node.RunID == run.RunID && node.Kind == "watch" && node.Status == store.Running {
+				watchID = node.ID
+				return true
+			}
+		}
+		return false
+	})
+	if !runner.cancelNode(watchID) {
+		t.Fatal("watch was not cancellable")
+	}
+	waitWorkflowFixture(t, runner.ctx, func() bool {
+		record, _ := state.WorkflowRunByRequest(runner.ctx, "cancel")
+		return record.Status == store.Cancelled
+	})
+	raw, err := os.ReadFile(filepath.Join(runner.library.home.State, "watches", watchID+".json"))
+	var stored engine.WatchState
+	if err != nil || json.Unmarshal(raw, &stored) != nil || !stored.Cancelled {
+		t.Fatalf("watch cancellation was not persisted: %s (%v)", raw, err)
 	}
 }

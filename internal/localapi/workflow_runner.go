@@ -17,6 +17,7 @@ import (
 	"github.com/romanvolkov/flows/internal/builtin"
 	"github.com/romanvolkov/flows/internal/catalog"
 	"github.com/romanvolkov/flows/internal/config"
+	"github.com/romanvolkov/flows/internal/engine"
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/plugin"
@@ -27,6 +28,8 @@ import (
 var errStaleWorkflow = errors.New("workflow is unavailable or has changed since it was selected")
 
 type workflowRunner struct {
+	notifications *builtin.NotificationCenter
+	watches       *engine.WatchStore
 	ctx           context.Context
 	state         *store.Store
 	runs          *RunManager
@@ -295,9 +298,14 @@ func (r *workflowRunner) executeWorkflowStep(ctx context.Context, run store.Work
 
 func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.WorkflowRun, spec store.NewWorkflowRun, step store.WorkflowStep, node workflow.NodeSpec, attempt store.Attempt, snapshot *workflow.LaunchSnapshot, with map[string]any) (map[string]any, error) {
 	if node.Watch != nil {
-		return nil, fmt.Errorf("workflow step %s uses an unsupported execution rule", step.StepID)
+		return r.executeWatch(ctx, run, step, node, attempt, snapshot, with)
 	}
-	if node.Uses == "core.harness" {
+	switch node.Uses {
+	case "core.wait":
+		return r.executeWait(ctx, step, with)
+	case "core.notify":
+		return r.executeNotify(ctx, run, step, attempt, with)
+	case "core.harness":
 		return r.executeHarness(ctx, spec, step, attempt, snapshot, with)
 	}
 	if node.Uses == "core.command" {
@@ -323,27 +331,7 @@ func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.Workf
 		out := map[string]any{"exit_code": result.ExitCode, "stdout": result.Stdout, "stderr": result.Stderr}
 		return out, err
 	}
-	if step.ToolID == "" || step.CacheKey == "" || step.BinaryDigest == "" {
-		return nil, fmt.Errorf("operation %q is not executable", node.Uses)
-	}
-	home := r.library.home
-	binary := filepath.Join(home.State, "builds", step.ToolID, step.CacheKey, "plugin")
-	data, err := os.ReadFile(binary)
-	if err != nil {
-		return nil, err
-	}
-	if !strings.EqualFold(fmt.Sprintf("%x", sha256.Sum256(data)), step.BinaryDigest) {
-		return nil, fmt.Errorf("pinned tool %s failed binary integrity verification", step.ToolID)
-	}
-	result, err := plugin.NewRegistry(home).InvokePinned(ctx, step.ToolID, step.CacheKey, plugin.InvokeConfig{
-		Operation: node.Uses, AttemptID: attempt.ID, RunID: run.RunID, RequestID: step.InvocationID, Input: with,
-		OnMilestone: func(name string) error {
-			if !slices.Contains(snapshot.Compiled.Definition.Milestones, name) {
-				return fmt.Errorf("operation %q reported undeclared workflow milestone %q", node.Uses, name)
-			}
-			return r.state.RecordWorkflowMilestone(ctx, step.NodeID, attempt.ID, name)
-		},
-	})
+	result, err := r.invokePinnedPlugin(ctx, run, step, node, attempt, snapshot, with, "")
 	if err != nil {
 		return nil, err
 	}
@@ -352,4 +340,29 @@ func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.Workf
 		err = json.Unmarshal(result.Output, &out)
 	}
 	return out, err
+}
+
+func (r *workflowRunner) invokePinnedPlugin(ctx context.Context, run store.WorkflowRun, step store.WorkflowStep, node workflow.NodeSpec,
+	attempt store.Attempt, snapshot *workflow.LaunchSnapshot, with map[string]any, cursor string) (plugin.InvokeResult, error) {
+	if step.ToolID == "" || step.CacheKey == "" || step.BinaryDigest == "" {
+		return plugin.InvokeResult{}, fmt.Errorf("operation %q is not executable", node.Uses)
+	}
+	home := r.library.home
+	binary := filepath.Join(home.State, "builds", step.ToolID, step.CacheKey, "plugin")
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		return plugin.InvokeResult{}, err
+	}
+	if !strings.EqualFold(fmt.Sprintf("%x", sha256.Sum256(data)), step.BinaryDigest) {
+		return plugin.InvokeResult{}, fmt.Errorf("pinned tool %s failed binary integrity verification", step.ToolID)
+	}
+	return plugin.NewRegistry(home).InvokePinned(ctx, step.ToolID, step.CacheKey, plugin.InvokeConfig{
+		Operation: node.Uses, AttemptID: attempt.ID, RunID: run.RunID, RequestID: step.InvocationID, Input: with, Cursor: cursor,
+		OnMilestone: func(name string) error {
+			if snapshot == nil || !slices.Contains(snapshot.Compiled.Definition.Milestones, name) {
+				return fmt.Errorf("operation %q reported undeclared workflow milestone %q", node.Uses, name)
+			}
+			return r.state.RecordWorkflowMilestone(ctx, step.NodeID, attempt.ID, name)
+		},
+	})
 }
