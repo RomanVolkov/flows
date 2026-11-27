@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 
 	"github.com/romanvolkov/flows/internal/command"
@@ -94,17 +93,8 @@ func runAttach(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if ctl := os.Getenv("FLOWS_ATTACH_CTL"); ctl != "" {
-		var epoch uint64
-		if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
-			epoch, _ = strconv.ParseUint(raw, 10, 64)
-		}
-		return host.AttachNative(ctx, *socketPath, *sessionID, os.Stdin, os.Stdout, host.NativeAttachOptions{
-			ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
-			Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
-			Epoch:         epoch,
-			ControlSocket: ctl,
-		})
+	if opts := host.NativeAttachOptionsFromEnv(); opts.ControlSocket != "" {
+		return host.AttachNative(ctx, *socketPath, *sessionID, os.Stdin, os.Stdout, opts)
 	}
 	return host.AttachTTY(ctx, *socketPath, *sessionID, os.Stdin, os.Stdout)
 }

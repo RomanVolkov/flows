@@ -1,7 +1,9 @@
 #import "TerminalView.h"
 #import <CoreGraphics/CoreGraphics.h>
 #include <mach/mach_time.h>
+#include <errno.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -249,6 +251,7 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
 - (void)syncSize {
     if (!self.surface || !self.window) return;
     NSSize pixels = [self convertSizeToBacking:self.bounds.size];
+    if (pixels.width <= 0 || pixels.height <= 0) return;
     double scale = self.window.backingScaleFactor;
     NSNumber *display = self.window.screen.deviceDescription[@"NSScreenNumber"];
     if (display) ghostty_surface_set_display_id(self.surface, display.unsignedIntValue);
@@ -269,7 +272,10 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
     }
     strcpy(addr.sun_path, path.UTF8String);
     unlink(addr.sun_path);
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 || listen(fd, 4) != 0) {
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+        chmod(addr.sun_path, 0600) != 0 ||
+        listen(fd, 4) != 0) {
+        unlink(addr.sun_path);
         close(fd);
         return NO;
     }
@@ -286,6 +292,7 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
         if (clientFd < 0) return;
         fcntl(clientFd, F_SETFL, O_NONBLOCK);
         strongSelf.ctlConnFd = clientFd;
+        strongSelf.ctlListenFd = -1;
         dispatch_source_cancel(acceptSource);
         strongSelf.ctlAcceptSource = nil;
         [strongSelf startControlReader:clientFd];
@@ -310,7 +317,7 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
             if (n > 0) {
                 [strongSelf.ctlBuffer appendBytes:buf length:(NSUInteger)n];
                 [strongSelf drainControlLines];
-            } else if (n == 0) {
+            } else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
                 dispatch_source_cancel(readSource);
                 strongSelf.ctlReadSource = nil;
                 strongSelf.ctlConnFd = -1;
@@ -477,8 +484,12 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
 - (void)detach {
     [self stopRenderMetrics];
     if (self.ctlConnFd >= 0) {
+        if (self.ready) {
+            [self syncScrollOffsetToHost];
+        }
         [self sendControlCommand:@{@"type": @"detach"}];
     }
+    [self.ctlBuffer setLength:0];
     if (self.ctlReadSource) {
         dispatch_source_cancel(self.ctlReadSource);
         self.ctlReadSource = nil;

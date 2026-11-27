@@ -15,7 +15,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -142,6 +141,21 @@ func (a *App) Request(action, payload string) (string, error) {
 }
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 
+func (a *App) shutdown(context.Context) {
+	a.nativeTerminals.Range(func(key, _ any) bool {
+		if id, ok := key.(string); ok {
+			a.Detach(id)
+		}
+		return true
+	})
+	a.terminals.Range(func(key, _ any) bool {
+		if id, ok := key.(string); ok {
+			a.Detach(id)
+		}
+		return true
+	})
+}
+
 // OpenLibrary opens the selected user package folder in Finder.
 func (a *App) OpenLibrary(kind string) error {
 	var path string
@@ -244,18 +258,9 @@ func (a *App) Clipboard(text string) bool {
 	return a.ctx != nil && wailsruntime.ClipboardSetText(a.ctx, text) == nil
 }
 func runNativeAttach(socketPath, sessionID string) error {
-	var epoch uint64
-	if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
-		epoch, _ = strconv.ParseUint(raw, 10, 64)
-	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	return host.AttachNative(ctx, socketPath, sessionID, os.Stdin, os.Stdout, host.NativeAttachOptions{
-		ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
-		Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
-		Epoch:         epoch,
-		ControlSocket: os.Getenv("FLOWS_ATTACH_CTL"),
-	})
+	return host.AttachNative(ctx, socketPath, sessionID, os.Stdin, os.Stdout, host.NativeAttachOptionsFromEnv())
 }
 
 func main() {
@@ -272,7 +277,7 @@ func main() {
 	app := &App{home: home}
 	err = wails.Run(&options.App{Title: "Flows", Width: 1280, Height: 820, MinWidth: 700, MinHeight: 440,
 		BackgroundColour: &options.RGBA{},
-		AssetServer:      &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), WebviewIsTransparent: true, WindowIsTranslucent: true, Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened}, OnStartup: app.startup,
+		AssetServer:      &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), WebviewIsTransparent: true, WindowIsTranslucent: true, Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened}, OnStartup: app.startup, OnShutdown: app.shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "dev.flows.app", OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.focusWindow() }},
 		Bind:               []interface{}{app}})
 	if err != nil {

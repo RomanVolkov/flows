@@ -536,6 +536,20 @@ type NativeAttachOptions struct {
 	ControlSocket string
 }
 
+// NativeAttachOptionsFromEnv reads native attach configuration from environment variables.
+func NativeAttachOptionsFromEnv() NativeAttachOptions {
+	var epoch uint64
+	if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
+		epoch, _ = strconv.ParseUint(raw, 10, 64)
+	}
+	return NativeAttachOptions{
+		ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
+		Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
+		Epoch:         epoch,
+		ControlSocket: os.Getenv("FLOWS_ATTACH_CTL"),
+	}
+}
+
 type nativeControlEvent struct {
 	Type       string `json:"type"`
 	ClientID   string `json:"client_id,omitempty"`

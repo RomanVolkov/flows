@@ -288,7 +288,9 @@
 
   function claimInput() {
     if (mode === 'native' && terminalId) {
-      api.ClaimNativeTerminalInput?.(terminalId).catch((e: unknown) => (status = String(e)))
+      api.ClaimNativeTerminalInput?.(terminalId)
+        .then(() => api.FocusNativeTerminal?.(terminalId))
+        .catch((e: unknown) => (status = String(e)))
     }
   }
 

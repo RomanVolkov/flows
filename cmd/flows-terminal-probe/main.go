@@ -81,18 +81,9 @@ func run(args []string) error {
 		if len(args) >= 3 {
 			sessionID = args[2]
 		}
-		var epoch uint64
-		if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
-			epoch, _ = strconv.ParseUint(raw, 10, 64)
-		}
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
-		return host.AttachNative(ctx, args[1], sessionID, os.Stdin, os.Stdout, host.NativeAttachOptions{
-			ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
-			Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
-			Epoch:         epoch,
-			ControlSocket: os.Getenv("FLOWS_ATTACH_CTL"),
-		})
+		return host.AttachNative(ctx, args[1], sessionID, os.Stdin, os.Stdout, host.NativeAttachOptionsFromEnv())
 	}
 	if len(args) >= 3 && args[0] == "scroll" {
 		rows, err := strconv.Atoi(args[2])
