@@ -29,9 +29,11 @@ Validate a workflow or tool package with `flows validate <package-directory>`. A
 
 ## Built-in Workflows
 
-- `workflows/validate-package` checks a directory containing `workflow.yaml` or `tool.yaml` for package validation errors.
-- `workflows/review-open-prs`: Scheduled PR/MR discovery and per-item harness review with repository/head deduplication and schedule overlap protection.
-- `workflows/deliver-change`: Five-stage intake → group planning (`flows/plan-group.yaml`) → plan reconciliation → implementation (`flows/implement-group.yaml`) → review/merge watch (`flows/watch-change.yaml`). All steps, prompts, and provider bindings can be edited in YAML without recompiling `flowsd`.
+- `workflows/validate-package` checks the manifest and the declared dependencies of a workflow or tool package.
+- `workflows/review-open-prs` lists open GitHub pull requests or GitLab merge requests, runs a review agent for each,
+  and sends a notification when the reviews finish.
+- `workflows/deliver-change` turns a change request into task groups, asks for approval, and has agents draft and
+  review plans for the groups. You can edit the YAML and prompts to adapt it to your process.
 
 ## Evidence-Backed Improvements
 

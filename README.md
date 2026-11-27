@@ -1,65 +1,65 @@
 # Flows
 
-Local macOS desktop & CLI workflow orchestrator for AI coding harnesses (`claude`, `codex`, `agy`), deterministic commands, and provider plugins (`git`, `github`, `gitlab`, `jira`, `youtrack`, `zulip`).
+[![Latest release](https://img.shields.io/github/v/release/RomanVolkov/flows)](https://github.com/RomanVolkov/flows/releases/latest)
 
-## Homebrew
+**Run AI coding sessions and repeatable engineering workflows from one macOS workspace.**
 
-For Apple Silicon on macOS 14 or later, add the release tap to your Brewfile:
+Flows gives you a canvas for working with Claude Code, Codex, and Antigravity CLI. Open a terminal
+for a quick coding session, or build a workflow that calls tools, hands work to agents, and pauses
+for your approval. The canvas shows what ran, what is waiting, and where you can step in.
 
-```ruby
-tap "romanvolkov/flows", "https://github.com/RomanVolkov/flows.git"
-cask "romanvolkov/flows/flows"
+For example, a review workflow can list open pull requests through GitHub, start an agent to
+review each diff, and notify you when the reviews finish. You can inspect each step and open the
+agent's terminal during the run.
+
+## What you can do
+
+- **Work with coding agents.** Start Claude Code, Codex, or Antigravity CLI (`agy`) in a local repository
+  and open their terminals from the canvas.
+- **Run repeatable workflows.** Combine commands, reusable tools, and agent prompts. Start work as
+  prerequisites finish, run a step for each item in a list, or wait for a condition.
+- **Decide when a workflow can proceed.** Add a question or approval before the next step. Inspect
+  failures and interrupted runs on the canvas.
+- **Create your own workflows and tools.** Describe the idea in a guided conversation. Review which
+  tools to reuse, which to build, and what to assign to agents before approving implementation.
+  Import existing packages and see validation issues in Settings.
+- **See token usage.** Compare recorded usage by harness and model in Analytics.
+
+## Get Flows
+
+Flows runs on Apple Silicon Macs with macOS 14 or later.
+
+```sh
+brew tap romanvolkov/flows https://github.com/RomanVolkov/flows.git
+brew install --cask romanvolkov/flows/flows
 ```
 
-Run `brew bundle` to install, or `brew upgrade --cask romanvolkov/flows/flows` to update. The user-domain package installs Flows.app in ~/Applications, links the CLI, and registers the per-user LaunchAgent. Updates restart the daemon. Its installer clears the quarantine attribute on the installed app.
+You can also download the Apple Silicon installer from the [latest GitHub release](https://github.com/RomanVolkov/flows/releases/latest).
+Install Go first if you use the installer directly. Flows uses it to build the bundled tools from source.
+If you installed through Homebrew, update with `brew upgrade --cask romanvolkov/flows/flows`.
 
-The first install that supports starter packages adds them to the user library. Later updates preserve edits and deletions.
+## Start your first session or workflow
 
-Pushing a stable `vMAJOR.MINOR.PATCH` tag builds and smoke-tests the installer, publishes it to GitHub Releases, then updates the checksummed cask on the default branch. The workflow needs permission to push that cask update. The first successful release creates the tap entry.
+1. Install and sign in to your preferred coding agent. Open **Flows** from Applications and check
+   that the agent appears in **Settings**.
+2. Press `⌘N`. Choose **Session · coding harness** to open a terminal in a local repository, or
+   choose **Run a workflow** to pick a starter workflow.
+3. Select a node on the canvas to inspect its progress, open its terminal, or answer a question.
 
-## Quickstart
+### Workflows included with Flows
 
-1. Verify toolchain prerequisites:
-   ```sh
-   make doctor
-   ```
-2. Build core binaries (`flows`, `flowsd`, `flows-host`) and plugins:
-   ```sh
-   make build plugins
-   ```
-3. Run unit tests, `go vet`, `staticcheck`, desktop checks, and integration tests:
-   ```sh
-   make check desktop-check integration
-   ```
-4. Package and install `~/Applications/Flows.app` and `~/.local/bin/flows`:
-   ```sh
-   make package install
-   ```
+| Workflow | What it does |
+| --- | --- |
+| **Review open PRs** | Finds open GitHub pull requests or GitLab merge requests and runs an agent review for each. Set up `gh` or `glab` for the provider you use. |
+| **Deliver change** | Takes a change request, proposes task groups for approval, and has agents draft and review plans. |
+| **Validate package** | Checks a folder containing a workflow or tool manifest for configuration errors and missing dependencies. |
 
-Run `make ui-check` for the WebKit UI tests alone. They load the production frontend with a mocked Wails bridge. Fixtures and interaction tests live in `desktop/app/frontend/tests/ui`. The first run downloads the test browser.
+To add a package, choose **New → Import a workflow or external tool** and select its folder.
+Once Flows prepares a workflow package, it appears in **Run a workflow**.
 
-## Run an imported workflow
+## Learn more
 
-In **New**, choose **Import a workflow or external tool** and select the directory containing its manifest. Flows prepares the package in the background. Once the workflow is ready, choose **Run a workflow**, select the workflow, and fill in its inputs. The Canvas shows each step as it runs. Settings shows packages that need fixes or are still being prepared.
-
-Workflow harnesses can submit a JSON result with `flows bridge result <file>` or `flows bridge result -` for standard input. Flows validates the result against the attempt's output schema before releasing downstream steps. After a daemon restart, interrupted runs remain visible for manual review.
-
-## CLI & Build Targets
-
-- `flows`: `version`, `status`, `shutdown`, `validate <package-directory> [--json]`, `spec {path|show [authoring|protocol|workflow|tool]}`
-- `flowsd`: `run`, `--foreground`
-- `flows-host`: `serve`, `attach`
-- `Makefile`: `build`, `plugins`, `desktop`, `package`, `install`, `install-spec`, `uninstall`, `check`, `desktop-check`, `integration`, `doctor` (plus `build/macos.mk`: `deps`, `fonts`, `libghostty`, `terminal-probe`, `terminal-probe-check`)
-
-## Prerequisites
-
-- **Source builds:** Go (pinned in `build/toolchain.lock`), Xcode Command Line Tools (`clang`), Node.js with npm for the Svelte frontend, and `staticcheck`.
-- **Packaged app (`Flows.app`):** Self-contained Go binaries. Building source tools requires Go. Optional provider CLIs (`gh`, `glab`, `git`) and coding harnesses (`claude`, `codex`, `agy`) are configured in Settings or `PATH`.
-
-## Documentation
-
-- [Operations & Lifecycle](docs/operations.md)
-- [Workflow Authoring](docs/workflows.md)
-- [Plugin SDK & Contracts](docs/plugins.md)
-- [Authoring Spec v1](spec/v1/authoring.md)
-- [Protocol Spec v1](spec/v1/protocol.md)
+- [Write, import, and validate workflows](docs/workflows.md)
+- [Build a tool for Flows](docs/plugins.md)
+- [Install from source or troubleshoot](docs/operations.md)
+- [Report a problem or suggest an improvement](https://github.com/RomanVolkov/flows/issues)

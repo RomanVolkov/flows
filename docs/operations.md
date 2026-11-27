@@ -1,5 +1,24 @@
 # Operations Guide
 
+## Build and install from source
+
+Source builds use the Go version in `build/toolchain.lock`, Xcode Command Line Tools, and Node.js with npm.
+Run `make doctor` to check the local toolchain.
+
+```sh
+make doctor
+make check desktop-check integration
+make install
+```
+
+`make install` builds and installs Flows in `~/Applications`, links the CLI in `~/.local/bin`, and
+registers the per-user daemon. Use `make build plugins` to build the command line binaries and tools,
+or `make package` to build the app bundle and archive. `make ui-check` runs the WebKit UI suite against
+the production frontend with a mocked desktop bridge.
+
+Pushing a stable version tag such as `v1.2.0` triggers the release workflow. GitHub Actions builds and
+checks the macOS installer, publishes it with its checksum, and updates the Homebrew cask.
+
 ## Daemon & Service Status
 
 `flowsd` runs per-user via `launchd` (`~/Library/LaunchAgents/dev.flows.daemon.plist`, or an isolated hash-suffixed label for dev homes).
