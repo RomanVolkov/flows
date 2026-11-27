@@ -17,7 +17,11 @@
         "properties": {
           "type": { "type": "string", "enum": ["string", "number", "integer", "boolean", "array", "object"] },
           "required": { "type": "boolean" },
-          "default": {}
+          "default": {},
+          "description": { "type": "string" },
+          "placeholder": { "type": "string" },
+          "enum": { "type": "array", "minItems": 1, "uniqueItems": true },
+          "control": { "type": "string", "enum": ["text", "multiline", "number", "toggle", "segmented", "select", "folder", "array", "repos"] }
         }
       }
     },

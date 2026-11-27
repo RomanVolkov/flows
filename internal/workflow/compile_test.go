@@ -201,3 +201,25 @@ func TestValidationErrorsAndNestedRecursion(t *testing.T) {
 		t.Fatalf("expected workflow_recursion diagnostic, got %+v", rep)
 	}
 }
+
+func TestWorkflowEnumConstraints(t *testing.T) {
+	def := &workflow.Definition{
+		Schema: "flows/v1", ID: "typed", Version: "1.0.0",
+		Inputs: map[string]workflow.InputSpec{"count": {Type: "integer", Default: 1, Enum: []any{1, 2}}},
+		Nodes:  map[string]workflow.NodeSpec{"run": {ID: "run", Uses: "core.command"}}, NodeOrder: []string{"run"},
+	}
+	if _, diags := workflow.Compile(def, testCatalog(t), nil); len(diags) != 0 {
+		t.Fatalf("valid enum: %v", diags)
+	}
+	if _, err := workflow.ResolveInputs(def, map[string]any{"count": float64(2)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workflow.ResolveInputs(def, map[string]any{"count": float64(3)}); err == nil {
+		t.Fatal("accepted an undeclared enum value")
+	}
+	def.Inputs["count"] = workflow.InputSpec{Type: "integer", Default: 3, Enum: []any{1, "two"}}
+	_, diags := workflow.Compile(def, testCatalog(t), nil)
+	if len(diags) != 2 || diags[0].Code != "type_mismatch" || diags[1].Code != "invalid_choice" {
+		t.Fatalf("unexpected enum diagnostics: %v", diags)
+	}
+}

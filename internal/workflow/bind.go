@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -31,9 +33,27 @@ func ResolveInputs(def *Definition, raw map[string]any) (map[string]any, error) 
 		if spec.Type != "" && !matchesType(val, spec.Type) {
 			return nil, fmt.Errorf("input %q value %v does not match type %q", name, val, spec.Type)
 		}
+		if len(spec.Enum) > 0 && !enumContains(spec.Enum, val) {
+			return nil, fmt.Errorf("input %q must be one of the allowed choices", name)
+		}
 		resolved[name] = val
 	}
 	return resolved, nil
+}
+
+// Compare the JSON representations so YAML integers and equivalent JSON numbers match.
+func enumContains(choices []any, value any) bool {
+	actual, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	for _, choice := range choices {
+		expected, err := json.Marshal(choice)
+		if err == nil && bytes.Equal(expected, actual) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResolveValue recursively evaluates ${{ ... }} expressions in v.

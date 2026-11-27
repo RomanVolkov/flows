@@ -36,9 +36,13 @@ func (d Diagnostic) Error() string {
 
 // InputSpec declares a typed workflow input parameter.
 type InputSpec struct {
-	Type     string `yaml:"type" json:"type"`
-	Required bool   `yaml:"required" json:"required,omitempty"`
-	Default  any    `yaml:"default" json:"default,omitempty"`
+	Description string `yaml:"description" json:"description,omitempty"`
+	Placeholder string `yaml:"placeholder" json:"placeholder,omitempty"`
+	Enum        []any  `yaml:"enum" json:"enum,omitempty"`
+	Control     string `yaml:"control" json:"control,omitempty"`
+	Type        string `yaml:"type" json:"type"`
+	Required    bool   `yaml:"required" json:"required,omitempty"`
+	Default     any    `yaml:"default" json:"default,omitempty"`
 }
 
 // ForEachSpec configures collection fan-out over items with stable key.

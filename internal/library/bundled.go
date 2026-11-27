@@ -14,7 +14,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const bundledMarkerVersion = "source-v1\n"
+const bundledMarkerVersion = "source-v2\n"
+
+var previousBundledWorkflows = map[string]string{
+	"deliver-change":  "b93f1c12d9235f6e7baf343fdc4efcf9d8d93d341c09dd727d048d2fd77c0501",
+	"review-open-prs": "6026fbe08b9b63f3980e1b0e6728bf233a29f988c244056cf7db6e352aba5cb5",
+}
 
 // InstallBundled copies starter packages into the editable library once per bundle
 // format version. Bundled tools with a prebuilt executable binary are activated directly;
@@ -41,10 +46,21 @@ func installBundled(ctx context.Context, home paths.Home, resources, goBin strin
 		return err
 	}
 
-	if data, err := os.ReadFile(marker); err == nil && string(data) == bundledMarkerVersion {
+	data, err := os.ReadFile(marker)
+	if err == nil && string(data) == bundledMarkerVersion {
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+
+	// Existing source installs only need the workflow metadata update.
+	if string(data) == "source-v1\n" {
+		for id := range previousBundledWorkflows {
+			if err := installBundledPackage(ctx, home, filepath.Join(resources, "workflows", id), KindWorkflow, goBin); err != nil {
+				return err
+			}
+		}
+		return os.WriteFile(marker, []byte(bundledMarkerVersion), 0600)
 	}
 
 	// Only require a host Go compiler if at least one bundled tool lacks a prebuilt binary.
@@ -136,6 +152,11 @@ func installBundledPackage(ctx context.Context, home paths.Home, source string, 
 	case targetErr == nil && aliasErr == nil && prev.Status == StatusIdentical:
 		// Recover if installation stopped before compilation/activation, or upgrade identical sources.
 		shouldActivate = true
+	case targetErr == nil && aliasErr == nil && kind == KindWorkflow && prev.Status == StatusConflict:
+		if old, found := previousBundledWorkflows[prev.ID]; found && prev.ExistingDigest == old {
+			_, err := Import(home, source, ImportOptions{AllowOverwrite: true})
+			return err
+		}
 	case targetErr == nil && aliasErr == nil && kind == KindTool && prev.Status == StatusConflict:
 		// Upgrade legacy prebuilt binary-only bundles cleanly while preserving user-modified tool sources.
 		if isLegacyPrebuiltBundle(home, prev.ID, prev.TargetDir) {

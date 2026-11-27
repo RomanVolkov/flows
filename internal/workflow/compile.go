@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -104,6 +105,19 @@ func TypeCheck(def *Definition) (*CompiledWorkflow, []Diagnostic) {
 		}
 		if in.Default != nil && !matchesType(in.Default, in.Type) {
 			addErr("inputs."+name+".default", "type_mismatch", fmt.Sprintf("default %v does not match declared type %q", in.Default, in.Type))
+		}
+		if in.Control != "" && !slices.Contains([]string{"text", "multiline", "number", "toggle", "segmented", "select", "folder", "array", "repos"}, in.Control) {
+			addErr("inputs."+name+".control", "invalid_control", fmt.Sprintf("unknown input control %q", in.Control))
+		}
+		for i, choice := range in.Enum {
+			if !matchesType(choice, in.Type) {
+				addErr("inputs."+name+".enum", "type_mismatch", fmt.Sprintf("choice %v does not match declared type %q", choice, in.Type))
+			} else if enumContains(in.Enum[:i], choice) {
+				addErr("inputs."+name+".enum", "duplicate_choice", fmt.Sprintf("duplicate choice %v", choice))
+			}
+		}
+		if in.Default != nil && len(in.Enum) > 0 && !enumContains(in.Enum, in.Default) {
+			addErr("inputs."+name+".default", "invalid_choice", "default is not one of the allowed choices")
 		}
 	}
 

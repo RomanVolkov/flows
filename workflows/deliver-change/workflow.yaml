@@ -11,9 +11,13 @@ inputs:
   tracker_provider:
     type: string
     default: jira
+    enum: [jira, youtrack]
+    description: Issue tracker for the requested change
   code_host:
     type: string
     default: github
+    enum: [github, gitlab]
+    description: Hosting provider for the repositories
   chat_channel:
     type: string
     default: engineering

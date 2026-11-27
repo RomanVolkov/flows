@@ -14,9 +14,12 @@ inputs:
   provider:
     type: string
     default: github
+    enum: [github, gitlab]
+    description: Default provider for review
   reviewer_harness:
     type: string
     default: claude
+    description: Harness to run the reviews
   dedupe_by_head:
     type: boolean
     default: true
