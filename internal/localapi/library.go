@@ -13,18 +13,14 @@ type importRequest struct {
 	AllowOverwrite bool   `json:"allow_overwrite,omitempty"`
 }
 
-func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, extraRoots []string) {
+func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, worker *libraryReconciler) {
 	switch r.URL.Path {
 	case "/v1/library":
 		if !method(w, r, http.MethodGet) {
 			return
 		}
-		snap, err := library.Scan(home, extraRoots)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "scan_failed", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, snap)
+		worker.trigger()
+		writeJSON(w, http.StatusOK, worker.snapshot())
 	case "/v1/library/preview":
 		if !method(w, r, http.MethodPost) {
 			return
@@ -59,7 +55,7 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, extr
 			writeError(w, http.StatusBadRequest, "invalid_body", "invalid import request")
 			return
 		}
-		if report := library.Validate(home, req.Directory); !report.Valid {
+		if report := library.Validate(home, req.Directory); !canImportPackage(report) {
 			writeJSON(w, http.StatusUnprocessableEntity, report)
 			return
 		}
@@ -68,8 +64,25 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, extr
 			writeError(w, http.StatusConflict, "import_failed", err.Error())
 			return
 		}
+		worker.trigger()
 		writeJSON(w, http.StatusOK, rec)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown library endpoint")
 	}
+}
+
+// An unresolved dependency can be prepared after the package is imported.
+func canImportPackage(report library.ValidationReport) bool {
+	if report.Valid {
+		return true
+	}
+	if report.Kind != library.KindWorkflow || len(report.Diagnostics) == 0 {
+		return false
+	}
+	for _, diagnostic := range report.Diagnostics {
+		if diagnostic.Code != "unknown_operation" && diagnostic.Code != "unknown_workflow" {
+			return false
+		}
+	}
+	return true
 }

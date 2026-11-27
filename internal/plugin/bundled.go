@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -14,15 +15,24 @@ import (
 
 // ActivateBundled registers a prebuilt executable from an imported app bundle.
 func ActivateBundled(home paths.Home, id, version, source, binary string) error {
+	return activatePrebuilt(context.Background(), home, id, version, source, binary, "", true)
+}
+
+// ActivatePrebuilt installs a validated executable for a library package revision.
+func ActivatePrebuilt(ctx context.Context, home paths.Home, id, version, source, binary, packageDigest string) error {
+	return activatePrebuilt(ctx, home, id, version, source, binary, packageDigest, false)
+}
+
+func activatePrebuilt(ctx context.Context, home paths.Home, id, version, source, binary, packageDigest string, bundled bool) error {
 	lock, err := acquireToolLock(filepath.Join(home.Runtime, "install-"+id+".lock"))
 	if err != nil {
 		return err
 	}
 	defer lock.Close()
 
-	if _, err := LoadActiveTool(home, id); err == nil {
+	if active, err := LoadActiveTool(home, id); err == nil && (bundled || active.PackageDigest == packageDigest) {
 		return nil
-	} else if !os.IsNotExist(err) {
+	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
@@ -55,8 +65,18 @@ func ActivateBundled(home paths.Home, id, version, source, binary string) error 
 			return err
 		}
 		defer os.RemoveAll(stage)
-		if err := os.Link(binary, filepath.Join(stage, "plugin")); err != nil {
+		stagedBinary := filepath.Join(stage, "plugin")
+		if err := os.WriteFile(stagedBinary, data, 0700); err != nil {
 			return err
+		}
+		if !bundled {
+			manifest, err := Describe(ctx, stagedBinary)
+			if err != nil {
+				return err
+			}
+			if manifest.ID != id || manifest.Version != version {
+				return fmt.Errorf("plugin identity does not match %s@%s", id, version)
+			}
 		}
 		raw, err := json.MarshalIndent(receipt, "", "  ")
 		if err != nil {
@@ -72,6 +92,6 @@ func ActivateBundled(home paths.Home, id, version, source, binary string) error 
 		return err
 	}
 	return saveActiveTool(home, ActiveTool{
-		ToolID: id, SourceDir: source, Bundled: true, Receipt: receipt, ActivatedAt: time.Now().UnixNano(),
+		ToolID: id, SourceDir: source, Bundled: bundled, PackageDigest: packageDigest, Receipt: receipt, ActivatedAt: time.Now().UnixNano(),
 	})
 }

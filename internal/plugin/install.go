@@ -14,19 +14,21 @@ import (
 
 // ActiveTool records the currently active build receipt and source location for a tool.
 type ActiveTool struct {
-	Bundled     bool         `json:"bundled,omitempty"`
-	ToolID      string       `json:"tool_id"`
-	SourceDir   string       `json:"source_dir"`
-	Entry       string       `json:"entry,omitempty"`
-	Receipt     BuildReceipt `json:"receipt"`
-	ActivatedAt int64        `json:"activated_at"`
+	PackageDigest string       `json:"package_digest,omitempty"`
+	Bundled       bool         `json:"bundled,omitempty"`
+	ToolID        string       `json:"tool_id"`
+	SourceDir     string       `json:"source_dir"`
+	Entry         string       `json:"entry,omitempty"`
+	Receipt       BuildReceipt `json:"receipt"`
+	ActivatedAt   int64        `json:"activated_at"`
 }
 
 // InstallOptions configures tool build and activation.
 type InstallOptions struct {
-	Bundled bool
-	Entry   string
-	GoBin   string
+	PackageDigest string
+	Bundled       bool
+	Entry         string
+	GoBin         string
 }
 
 // Install builds sourceDir and atomically activates it under home.State,
@@ -47,12 +49,13 @@ func Install(ctx context.Context, home paths.Home, toolID, version, sourceDir st
 	}
 
 	active := ActiveTool{
-		Bundled:     opts.Bundled,
-		ToolID:      toolID,
-		SourceDir:   sourceDir,
-		Entry:       opts.Entry,
-		Receipt:     receipt,
-		ActivatedAt: time.Now().UnixNano(),
+		PackageDigest: opts.PackageDigest,
+		Bundled:       opts.Bundled,
+		ToolID:        toolID,
+		SourceDir:     sourceDir,
+		Entry:         opts.Entry,
+		Receipt:       receipt,
+		ActivatedAt:   time.Now().UnixNano(),
 	}
 	if err := saveActiveTool(home, active); err != nil {
 		return ActiveTool{}, err

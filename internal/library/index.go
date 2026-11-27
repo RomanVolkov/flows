@@ -7,29 +7,33 @@ import (
 
 	"github.com/romanvolkov/flows/internal/catalog"
 	"github.com/romanvolkov/flows/internal/paths"
+	"github.com/romanvolkov/flows/internal/workflow"
 )
 
 // IndexEntry represents a discovered workflow or tool package.
 type IndexEntry struct {
-	Kind    PackageKind `json:"kind"`
-	ID      string      `json:"id"`
-	Version string      `json:"version"`
-	Owner   string      `json:"owner,omitempty"`
-	Digest  string      `json:"digest"`
-	Origin  string      `json:"origin"` // "user" | "external"
-	Path    string      `json:"path"`
+	Status      string                `json:"status,omitempty"`
+	Diagnostics []workflow.Diagnostic `json:"diagnostics,omitempty"`
+	Kind        PackageKind           `json:"kind"`
+	ID          string                `json:"id"`
+	Version     string                `json:"version"`
+	Owner       string                `json:"owner,omitempty"`
+	Digest      string                `json:"digest"`
+	Origin      string                `json:"origin"` // "user" | "external"
+	Path        string                `json:"path"`
 }
 
 // ConflictInfo records a package ID appearing with different digests across roots.
 type ConflictInfo struct {
-	Kind      PackageKind `json:"kind"`
-	ID        string      `json:"id"`
-	Winner    IndexEntry  `json:"winner"`
-	Conflicted IndexEntry `json:"conflicted"`
+	Kind       PackageKind `json:"kind"`
+	ID         string      `json:"id"`
+	Winner     IndexEntry  `json:"winner"`
+	Conflicted IndexEntry  `json:"conflicted"`
 }
 
 // IndexSnapshot is the result of scanning user library + configured extra roots.
 type IndexSnapshot struct {
+	Malformed []IndexEntry   `json:"malformed,omitempty"`
 	Entries   []IndexEntry   `json:"entries"`
 	Conflicts []ConflictInfo `json:"conflicts,omitempty"`
 }
@@ -41,7 +45,28 @@ func Scan(home paths.Home, extraRoots []string) (*IndexSnapshot, error) {
 	snap := &IndexSnapshot{}
 	byKey := make(map[string]IndexEntry)
 
-	scanRoot := func(root, origin string) {
+	recordMalformed := func(dir, origin string, kind PackageKind, err error) {
+		if kind == "" {
+			switch {
+			case fileExists(filepath.Join(dir, "workflow.yaml")):
+				kind = KindWorkflow
+			case fileExists(filepath.Join(dir, "tool.yaml")):
+				kind = KindTool
+			default:
+				return
+			}
+		}
+		digest := ""
+		if _, hash, hashErr := collectPackageFiles(dir); hashErr == nil {
+			digest = hash
+		}
+		snap.Malformed = append(snap.Malformed, IndexEntry{
+			Kind: kind, ID: filepath.Base(dir), Path: dir, Origin: origin, Digest: digest, Status: "invalid",
+			Diagnostics: []workflow.Diagnostic{{File: dir, Code: "invalid_package", Message: err.Error(), Severity: "error"}},
+		})
+	}
+
+	scanRoot := func(root, origin string, kind PackageKind) {
 		entries, err := os.ReadDir(root)
 		if err != nil {
 			return // disappeared or unreadable root handled gracefully
@@ -53,6 +78,7 @@ func Scan(home paths.Home, extraRoots []string) (*IndexSnapshot, error) {
 			pkgDir := filepath.Join(root, e.Name())
 			prev, err := Preview(home, pkgDir)
 			if err != nil {
+				recordMalformed(pkgDir, origin, kind, err)
 				continue
 			}
 			entry := IndexEntry{
@@ -81,8 +107,8 @@ func Scan(home paths.Home, extraRoots []string) (*IndexSnapshot, error) {
 		}
 	}
 
-	scanRoot(home.Workflows(), "user")
-	scanRoot(home.Tools(), "user")
+	scanRoot(home.Workflows(), "user", KindWorkflow)
+	scanRoot(home.Tools(), "user", KindTool)
 	for _, extra := range extraRoots {
 		// An extra root may itself be a package directory or contain package subdirectories.
 		if fileExists(filepath.Join(extra, "workflow.yaml")) || fileExists(filepath.Join(extra, "tool.yaml")) {
@@ -105,10 +131,12 @@ func Scan(home paths.Home, extraRoots []string) (*IndexSnapshot, error) {
 					byKey[key] = entry
 					snap.Entries = append(snap.Entries, entry)
 				}
+			} else {
+				recordMalformed(extra, "external", "", err)
 			}
 			continue
 		}
-		scanRoot(extra, "external")
+		scanRoot(extra, "external", "")
 	}
 	return snap, nil
 }
