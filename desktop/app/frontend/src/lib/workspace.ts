@@ -1,7 +1,7 @@
 import { fromSnapshot, type Kind, type State } from './graph'
 declare global {
-  interface Window {go:{main:{App:{Attach(attempt:string):Promise<string>;ReadTerminal(id:string):Promise<string>;
-    WriteTerminal(id:string,data:string):Promise<void>;ResizeTerminal(id:string,cols:number,rows:number):Promise<void>;
+  interface Window {runtime:{EventsOn(event:string,callback:(data:any)=>void):()=>void};go:{main:{App:{Follow():void;Attach(attempt:string):Promise<string>;ReadTerminal(id:string):Promise<string>;
+    WriteTerminal(id:string,data:string):Promise<void>;ResizeTerminal(id:string,cols:number,rows:number):Promise<void>;OpenLibrary(kind:string):Promise<void>;
     Detach(id:string):Promise<void>;TermScroll(id:string,rows:number):Promise<void>;Clipboard(text:string):Promise<boolean>;
     Request(action:string,payload:string):Promise<string>,OpenedFile():Promise<string>}}}}
 }
@@ -14,15 +14,20 @@ export interface FlowNode {
 }
 export interface Workspace {
   cursor:number; nodes:FlowNode[]|null; edges:{from_id:string;to_id:string;milestone?:string}[]|null;
-  attempts:{id:string;node_id:string;number:number;status:string}[]|null
+  attempts:{id:string;node_id:string;number:number;status:string;started_at:number;finished_at?:number}[]|null
 }
 const kinds:Record<string,Kind>={workflow:'group',group:'group',session:'session',harness:'session',tool:'step',watch:'watch'}
 const states:Record<string,State>={waiting_for_dependencies:'pending',ready:'pending',running:'running',
   waiting_for_input:'blocked',stopping:'stopped',succeeded:'done',failed:'failed',interrupted:'blocked',skipped:'stopped',cancelled:'stopped'}
 export interface LiveSession {session_id:string;attempt_id:string;status:string;command:string;work_dir:string;child:{pid:number}}
 export function graphOf(w:Workspace, live:LiveSession[] = []) {
-  const attemptNodes=new Map((w.attempts??[]).map(a=>[a.id,a.node_id]))
-  return fromSnapshot({seq:w.cursor,sessions:live.flatMap(s=>{const node=attemptNodes.get(s.attempt_id);if(!node)return[];const agent=s.command.split('/').pop()??'harness';return[{id:s.session_id,attempt:s.attempt_id,node,agent,mode:'pty' as const,dir:s.work_dir,pid:s.child?.pid,started:'',tag:s.status}]}),nodes:(w.nodes??[]).map(n=>({
+  const attempts=w.attempts??[], nodes=w.nodes??[]
+  const attemptNodes=new Map(attempts.map(a=>[a.id,a.node_id]))
+  const attemptsByID=new Map(attempts.map(a=>[a.id,a]))
+  const tracked=new Set(live.map(s=>s.attempt_id))
+  const ended=(status:string)=>!['running','waiting_for_input','stopping'].includes(status)
+  const sessions=[...live.flatMap(s=>{const nodeID=attemptNodes.get(s.attempt_id),attempt=attemptsByID.get(s.attempt_id);if(!nodeID||!attempt)return[];const agent=s.command.split('/').pop()??'harness';return[{id:s.session_id,attempt:s.attempt_id,node:nodeID,agent,mode:'pty' as const,dir:s.work_dir,pid:s.child?.pid,started:new Date(attempt.started_at/1e6).toISOString(),exit:ended(attempt.status)?0:undefined,tag:attempt.status}]}),...attempts.filter(a=>!tracked.has(a.id)).flatMap(a=>{const node=nodes.find(n=>n.id===a.node_id);if(!node||node.kind!=='session')return[];return[{id:`attempt:${a.id}`,attempt:a.id,node:a.node_id,agent:node.name||'harness',mode:'pty' as const,dir:'',started:new Date(a.started_at/1e6).toISOString(),exit:ended(a.status)?0:undefined,tag:a.status}]})]
+  return fromSnapshot({seq:w.cursor,sessions,nodes:nodes.map(n=>({
     id:n.id,title:n.name||n.id,kind:kinds[n.kind]??'step',state:states[n.status]??'pending',
     label:n.kind+' · '+n.status.replaceAll('_',' '),parent:n.parent_id,created:'',updated:''})),
     edges:(w.edges??[]).map(e=>({from:e.from_id,to:e.to_id,reason:e.milestone}))})

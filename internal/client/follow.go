@@ -21,6 +21,7 @@ type WorkspaceObserver struct {
 	Selection func() []string
 	Reset     func(store.Workspace, []string)
 	Apply     func(store.Event)
+	Connected func(bool, error)
 }
 
 func (c *Client) Workspace(ctx context.Context) (store.Workspace, error) {
@@ -50,13 +51,21 @@ func (c *Client) Follow(ctx context.Context, observer WorkspaceObserver) error {
 				observer.Reset(view, retainedSelection(view, observer.Selection))
 				cursor, hydrated = view.Cursor, true
 				backoff = minBackoff
+				if observer.Connected != nil {
+					observer.Connected(true, nil)
+				}
+			} else if observer.Connected != nil {
+				observer.Connected(false, err)
 			}
 		}
 		if hydrated {
 			before := cursor
-			err = c.followStream(ctx, &cursor, observer.Apply)
+			err = c.followStream(ctx, &cursor, observer.Apply, observer.Connected)
 			if cursor != before {
 				backoff = minBackoff
+			}
+			if err != nil && observer.Connected != nil && ctx.Err() == nil {
+				observer.Connected(false, err)
 			}
 		}
 		var apiErr *localapi.Error
@@ -99,7 +108,7 @@ func retainedSelection(view store.Workspace, selection func() []string) []string
 	return retained
 }
 
-func (c *Client) followStream(ctx context.Context, cursor *int64, apply func(store.Event)) error {
+func (c *Client) followStream(ctx context.Context, cursor *int64, apply func(store.Event), connected func(bool, error)) error {
 	path := "/v1/events?after=" + strconv.FormatInt(*cursor, 10)
 	resp, err := c.send(ctx, http.MethodGet, path)
 	if err != nil {
@@ -109,6 +118,9 @@ func (c *Client) followStream(ctx context.Context, cursor *int64, apply func(sto
 	contentType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	if err != nil || contentType != "text/event-stream" {
 		return fmt.Errorf("%w: unexpected content type", errInvalidStream)
+	}
+	if connected != nil {
+		connected(true, nil)
 	}
 	return scanEvents(resp.Body, cursor, apply)
 }

@@ -76,7 +76,7 @@ func DefaultSettings() Settings {
 			Sound:         false,
 		},
 		Terminal: TerminalSettings{
-			FontFamily: "Iosevka Mono",
+			FontFamily: "IosevkaTerm Nerd Font Mono",
 			FontSize:   19,
 			Opacity:    0.90,
 			Blur:       true,

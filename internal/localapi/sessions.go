@@ -2,6 +2,7 @@ package localapi
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -119,6 +120,16 @@ func (m *SessionManager) List() []SessionSummary {
 		})
 	}
 	return out
+}
+
+// RecordExit refreshes the daemon's view after a host writes its durable exit record.
+func (m *SessionManager) RecordExit(rec host.Record) {
+	m.mu.Lock()
+	if _, ok := m.adopted[rec.SessionID]; ok {
+		m.adopted[rec.SessionID] = rec
+	}
+	m.leases[rec.AttemptID] = host.LeaseReleased
+	m.mu.Unlock()
 }
 
 // AcknowledgeStop moves a node through Stopping to Cancelled after verifying
@@ -240,4 +251,96 @@ func handleSessions(w http.ResponseWriter, r *http.Request, mgr *SessionManager)
 	default:
 		writeError(w, http.StatusNotFound, "not_found", "unknown session action")
 	}
+}
+
+// handleNodeStop stops the active attempt for a node. The node is the stable
+// user-facing target; session summaries may be absent while a host is being
+// reconciled, so clients should not have to discover a session ID first.
+func handleNodeStop(w http.ResponseWriter, r *http.Request, mgr *SessionManager, nodeID string) {
+	if !method(w, r, http.MethodPost) {
+		return
+	}
+	if mgr == nil {
+		writeError(w, http.StatusServiceUnavailable, "sessions_unavailable", "session manager is unavailable")
+		return
+	}
+	node, err := mgr.store.Node(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "node_not_found", "node not found")
+		return
+	}
+	if node.AttemptID == nil {
+		writeError(w, http.StatusConflict, "no_active_attempt", "node has no active attempt")
+		return
+	}
+	if node.Status != store.Running && node.Status != store.WaitingForInput {
+		writeError(w, http.StatusConflict, "node_not_running", "node is not running")
+		return
+	}
+	if err := mgr.AcknowledgeStop(r.Context(), nodeID, *node.AttemptID); err != nil {
+		writeError(w, http.StatusConflict, "stop_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+func handleNodeRemove(w http.ResponseWriter, r *http.Request, state *store.Store, mgr *SessionManager, nodeID string) {
+	if !method(w, r, http.MethodPost) {
+		return
+	}
+	view, err := state.Snapshot(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "snapshot_failed", "could not read workspace")
+		return
+	}
+	nodes := make(map[string]store.Node, len(view.Nodes))
+	children := make(map[string][]string)
+	for _, node := range view.Nodes {
+		nodes[node.ID] = node
+		if node.ParentID != nil {
+			children[*node.ParentID] = append(children[*node.ParentID], node.ID)
+		}
+	}
+	if _, ok := nodes[nodeID]; !ok {
+		writeError(w, http.StatusNotFound, "node_not_found", "node not found")
+		return
+	}
+	var subtree []store.Node
+	var visit func(string)
+	visit = func(id string) {
+		for _, child := range children[id] {
+			visit(child)
+		}
+		subtree = append(subtree, nodes[id])
+	}
+	visit(nodeID)
+	for _, node := range subtree { // descendants first, so parent cancellation follows its children
+		if node.Status != store.Running && node.Status != store.WaitingForInput && node.Status != store.Stopping {
+			continue
+		}
+		if node.AttemptID == nil {
+			writeError(w, http.StatusConflict, "active_attempt_missing", "cannot safely remove an active node without its attempt record")
+			return
+		}
+		if mgr == nil {
+			writeError(w, http.StatusServiceUnavailable, "sessions_unavailable", "cannot safely stop active sessions")
+			return
+		}
+		if err := mgr.AcknowledgeStop(r.Context(), node.ID, *node.AttemptID); err != nil {
+			writeError(w, http.StatusConflict, "stop_failed", err.Error())
+			return
+		}
+	}
+	removed, err := state.RemoveSubtree(r.Context(), nodeID)
+	if err != nil {
+		if errors.Is(err, store.ErrNodeActive) {
+			writeError(w, http.StatusConflict, "node_active", err.Error())
+		} else if errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "node_not_found", "node not found")
+		} else {
+			writeError(w, http.StatusConflict, "remove_failed", err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"removed": removed})
 }

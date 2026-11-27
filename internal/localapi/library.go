@@ -40,6 +40,16 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, extr
 			return
 		}
 		writeJSON(w, http.StatusOK, prev)
+	case "/v1/library/validate":
+		if !method(w, r, http.MethodPost) {
+			return
+		}
+		var req importRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_body", "invalid validation request")
+			return
+		}
+		writeJSON(w, http.StatusOK, library.Validate(home, req.Directory))
 	case "/v1/library/import":
 		if !method(w, r, http.MethodPost) {
 			return
@@ -47,6 +57,10 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, extr
 		var req importRequest
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes)).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_body", "invalid import request")
+			return
+		}
+		if report := library.Validate(home, req.Directory); !report.Valid {
+			writeJSON(w, http.StatusUnprocessableEntity, report)
 			return
 		}
 		rec, err := library.Import(home, req.Directory, library.ImportOptions{AllowOverwrite: req.AllowOverwrite})

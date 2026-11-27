@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	FontFamily = "Iosevka Mono"
+	FontFamily = "IosevkaTerm Nerd Font Mono"
 
 	// UI palette
 	Background = "#0A0A0B"
@@ -33,6 +33,7 @@ const (
 	TerminalForeground    = "#D1D9F5"
 	TerminalSelectionBg   = "#CBA6F7"
 	TerminalSelectionFg   = "#1E1E2F"
+	TerminalCursor        = "#F6E3E0"
 )
 
 // ANSI16 defines the 16-color terminal palette (0-7 normal, 8-15 bright).
@@ -43,6 +44,19 @@ var ANSI16 = [16]string{
 	// 8-15: #585B70, same six accents, then #A6ADC8
 	"#585B70", "#F38BA8", "#A6E3A1", "#F9E2AF",
 	"#89B4FA", "#F5C2E7", "#94E2D5", "#A6ADC8",
+}
+
+// TerminalOSC sets the canonical Ghostty screen colors before a harness starts,
+// matching Carson's runner initialization so its TUI uses the configured palette.
+func TerminalOSC() string {
+	var b strings.Builder
+	for i, color := range ANSI16 {
+		fmt.Fprintf(&b, "\x1b]4;%d;rgb:%s/%s/%s\x1b\\", i, color[1:3], color[3:5], color[5:7])
+	}
+	for i, color := range []string{TerminalForeground, TerminalBackground, TerminalCursor} {
+		fmt.Fprintf(&b, "\x1b]%d;rgb:%s/%s/%s\x1b\\", 10+i, color[1:3], color[3:5], color[5:7])
+	}
+	return b.String()
 }
 
 // GhosttyConfig renders the Ghostty surface configuration string for the terminal dock.

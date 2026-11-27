@@ -50,6 +50,7 @@ install:
 	@cp -R build/dist/Flows.app "$${HOME}/Applications/Flows.app"
 	@ln -sf "$${HOME}/Applications/Flows.app/Contents/Resources/bin/flows" "$${HOME}/.local/bin/flows"
 	@$(MAKE) install-spec
+	@if launchctl print "gui/$$(id -u)/dev.flows.daemon" >/dev/null 2>&1; then launchctl bootout "gui/$$(id -u)/dev.flows.daemon"; fi
 	@env -u FLOWS_HOME "$${HOME}/Applications/Flows.app/Contents/MacOS/flowsd" register
 	@env -u FLOWS_HOME "$${HOME}/.local/bin/flows" status
 

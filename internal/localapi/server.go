@@ -14,8 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/romanvolkov/flows/internal/config"
-	"github.com/romanvolkov/flows/internal/harness"
 	"github.com/romanvolkov/flows/internal/paths"
 	"github.com/romanvolkov/flows/internal/store"
 )
@@ -56,6 +54,7 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	defer listener.Close()
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
+	go runs.WatchAdoptedHosts(ctx)
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs, home),
@@ -119,6 +118,8 @@ func listen(path string) (*net.UnixListener, error) {
 }
 
 func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager, home paths.Home) http.Handler {
+	var harnesses harnessCache
+	usageHandler := UsageHandler(state, home)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > MaxBodyBytes {
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
@@ -166,34 +167,37 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			handleLibrary(w, r, home, nil)
 		case "/v1/settings", "/v1/settings/validate":
 			SettingsHandler(home)(w, r)
+			if r.URL.Path == "/v1/settings" && r.Method == http.MethodPatch {
+				harnesses.invalidate()
+			}
 		case "/v1/harnesses":
 			if method(w, r, http.MethodGet) {
-				settings, err := config.LoadSettings(home.Settings())
+				result, err := harnesses.list(r.Context(), home)
 				if err != nil {
-					writeError(w, 500, "settings_error", "could not read settings")
+					writeError(w, 500, "settings_error", "could not read settings or probe harnesses")
 					return
-				}
-				type available struct {
-					ID      string          `json:"id"`
-					Version string          `json:"version"`
-					Profile harness.Profile `json:"profile"`
-				}
-				result := make([]available, 0, 3)
-				for _, kind := range []harness.Kind{harness.KindClaude, harness.KindCodex, harness.KindAgy} {
-					adapter, _ := harness.ForKind(kind)
-					profile := config.ProfileFromSettings(kind, settings)
-					caps, err := adapter.Probe(r.Context(), profile.Executable)
-					if err == nil {
-						result = append(result, available{ID: string(kind), Version: caps.Version, Profile: profile})
-					}
 				}
 				writeJSON(w, 200, result)
 			}
 		case "/v1/usage", "/v1/usage/daily":
-			UsageHandler(state)(w, r)
+			usageHandler(w, r)
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
+			if nodeID, ok := strings.CutPrefix(r.URL.Path, "/v1/nodes/"); ok {
+				for _, action := range []string{"stop", "remove", "resume"} {
+					if id, matched := strings.CutSuffix(nodeID, "/"+action); matched && id != "" {
+						if action == "stop" {
+							handleNodeStop(w, r, sessions, id)
+						} else if action == "remove" {
+							handleNodeRemove(w, r, state, sessions, id)
+						} else {
+							handleNodeResume(w, r, runs, id)
+						}
+						return
+					}
+				}
+			}
 			if attempt, ok := strings.CutPrefix(r.URL.Path, "/v1/preview/"); ok && runs != nil {
 				if method(w, r, http.MethodGet) {
 					runs.preview(w, attempt)

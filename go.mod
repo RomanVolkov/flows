@@ -3,7 +3,6 @@ module github.com/romanvolkov/flows
 go 1.26.10
 
 require (
-	github.com/wailsapp/wails/v2 v2.17.1
 	github.com/creack/pty v1.1.24
 	github.com/wailsapp/wails/v2 v2.17.1
 	golang.org/x/term v0.46.0
@@ -58,3 +57,4 @@ require (
 )
 
 replace github.com/romanvolkov/flows/sdk/go => ./sdk/go
+

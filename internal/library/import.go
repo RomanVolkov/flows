@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -43,6 +44,8 @@ var (
 	ErrEscapingPath  = errors.New("package contains escaping or symlink path")
 	ErrCaseCollision = errors.New("package contains case-colliding file paths")
 	ErrConflict      = errors.New("package ID already exists with different content")
+	toolIDPattern    = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	operationPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*\.[a-z][a-z0-9-]*$`)
 )
 
 // PreviewResult summarizes a package folder before copying it into the user library.
@@ -77,13 +80,13 @@ type ImportReceipt struct {
 
 // ActiveAlias records the active digest and editable path for an ID.
 type ActiveAlias struct {
-	Kind       PackageKind `json:"kind"`
-	ID         string      `json:"id"`
-	Version    string      `json:"version"`
-	Digest     string      `json:"digest"`
-	Editable   string      `json:"editable"`
-	Revision   string      `json:"revision"`
-	UpdatedAt  int64       `json:"updated_at"`
+	Kind      PackageKind `json:"kind"`
+	ID        string      `json:"id"`
+	Version   string      `json:"version"`
+	Digest    string      `json:"digest"`
+	Editable  string      `json:"editable"`
+	Revision  string      `json:"revision"`
+	UpdatedAt int64       `json:"updated_at"`
 }
 
 type toolManifestYAML struct {
@@ -94,15 +97,15 @@ type toolManifestYAML struct {
 	Description string `yaml:"description"`
 	Help        string `yaml:"help"`
 	Operations  []struct {
-		ID            string          `yaml:"id"`
-		Description   string          `yaml:"description"`
-		Help          string          `yaml:"help"`
-		ExecutionKind string          `yaml:"execution_kind"`
-		ReadOnly      bool            `yaml:"read_only"`
-		InputSchema   map[string]any  `yaml:"input_schema"`
-		OutputSchema  map[string]any  `yaml:"output_schema"`
-		Milestones    []string        `yaml:"milestones"`
-		Prompts       []string        `yaml:"prompts"`
+		ID            string         `yaml:"id"`
+		Description   string         `yaml:"description"`
+		Help          string         `yaml:"help"`
+		ExecutionKind string         `yaml:"execution_kind"`
+		ReadOnly      bool           `yaml:"read_only"`
+		InputSchema   map[string]any `yaml:"input_schema"`
+		OutputSchema  map[string]any `yaml:"output_schema"`
+		Milestones    []string       `yaml:"milestones"`
+		Prompts       []string       `yaml:"prompts"`
 	} `yaml:"operations"`
 }
 
@@ -387,8 +390,31 @@ func ParseToolManifest(dir, origin, digest string, enabled bool) (catalog.Packag
 	if err := yaml.Unmarshal(data, &tm); err != nil {
 		return catalog.PackageProvenance{}, err
 	}
+	if tm.Schema != "flows/tool/v1" {
+		return catalog.PackageProvenance{}, fmt.Errorf("tool.yaml schema must be flows/tool/v1")
+	}
+	if !toolIDPattern.MatchString(tm.ID) {
+		return catalog.PackageProvenance{}, fmt.Errorf("tool.yaml id %q is invalid", tm.ID)
+	}
+	if strings.TrimSpace(tm.Version) == "" {
+		return catalog.PackageProvenance{}, fmt.Errorf("tool.yaml version is required")
+	}
+	if len(tm.Operations) == 0 {
+		return catalog.PackageProvenance{}, fmt.Errorf("tool.yaml must declare at least one operation")
+	}
 	ops := make([]catalog.OperationDescriptor, 0, len(tm.Operations))
 	for _, o := range tm.Operations {
+		if !operationPattern.MatchString(o.ID) {
+			return catalog.PackageProvenance{}, fmt.Errorf("operation id %q is invalid", o.ID)
+		}
+		if o.Description == "" {
+			return catalog.PackageProvenance{}, fmt.Errorf("operation %q requires a description", o.ID)
+		}
+		switch o.ExecutionKind {
+		case "command", "harness", "workflow", "plugin", "wait", "notify":
+		default:
+			return catalog.PackageProvenance{}, fmt.Errorf("operation %q has unsupported execution_kind %q", o.ID, o.ExecutionKind)
+		}
 		var inJSON, outJSON json.RawMessage
 		if len(o.InputSchema) > 0 {
 			inJSON, _ = json.Marshal(o.InputSchema)

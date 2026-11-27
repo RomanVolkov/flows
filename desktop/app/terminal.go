@@ -51,6 +51,15 @@ func (a *App) TermScroll(id string, rows int) error {
 	defer cancel()
 	return v.(*host.AttachConn).WriteInput(ctx, []byte(fmt.Sprintf("\x1b[%d%c", abs(rows), map[bool]byte{true: 'S', false: 'T'}[rows > 0])))
 }
+func (a *App) ScrollScreen(id string, rows int) error {
+	v, ok := a.terminals.Load(id)
+	if !ok {
+		return errors.New("terminal closed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return v.(*host.AttachConn).SendControl(ctx, host.ControlMessage{Type: "scroll", Rows: rows})
+}
 func abs(n int) int {
 	if n < 0 {
 		return -n

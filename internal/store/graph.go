@@ -213,6 +213,39 @@ func (s *Store) StartAttempt(ctx context.Context, nodeID string) (Attempt, error
 	return attempt, nil
 }
 
+// ResumeAttempt starts a new attempt for a stopped or interrupted node while
+// keeping its identity, parent, edges, and prior attempt history intact.
+func (s *Store) ResumeAttempt(ctx context.Context, nodeID string) (Attempt, error) {
+	attempt := Attempt{ID: rand.Text(), NodeID: nodeID, Status: Running}
+	err := s.write(ctx, func(tx *writeTx) error {
+		node, err := readNode(ctx, tx, nodeID)
+		if err != nil {
+			return err
+		}
+		if node.Status != Cancelled && node.Status != Interrupted && node.Status != Failed {
+			return fmt.Errorf("%w: resume attempt from %s", ErrTransition, node.Status)
+		}
+		attempt.StartedAt = tx.now
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO node_attempts(id, node_id, number, status, started_at)
+			VALUES (?, ?, (SELECT COALESCE(MAX(number), 0)+1 FROM node_attempts WHERE node_id=?), ?, ?)
+			RETURNING number
+		`, attempt.ID, nodeID, nodeID, attempt.Status, attempt.StartedAt).Scan(&attempt.Number); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE nodes SET status=?, active_attempt_id=?, wait_kind=NULL, wait_ref=NULL, wait_until=NULL, updated_at=? WHERE id=?
+		`, Running, attempt.ID, tx.now, nodeID); err != nil {
+			return err
+		}
+		return tx.event(ctx, node.RunID, &node.ID, &attempt.ID, "attempt_resumed", attempt)
+	})
+	if err != nil {
+		return Attempt{}, err
+	}
+	return attempt, nil
+}
+
 func (s *Store) Transition(ctx context.Context, nodeID string, next Status, wait *WaitReason) error {
 	if err := validateWait(next, wait); err != nil {
 		return err

@@ -2,12 +2,12 @@
  import {onMount} from 'svelte'
  import { Terminal } from '@xterm/xterm'
  import '@xterm/xterm/css/xterm.css'
- import {terminalTheme} from './theme'
+ import {terminalThemeFor,monoStack,theme} from './theme'
  let {attempt,title,close}:{attempt:string;title:string;close:()=>void}=$props()
  let box:HTMLDivElement, status=$state('Connecting…')
  onMount(()=>{
   const api=window.go.main.App
-  const term=new Terminal({fontFamily:'Menlo, monospace',fontSize:14,theme:terminalTheme,disableStdin:true})
+  const term=new Terminal({fontFamily:monoStack($theme),fontSize:$theme.font_size,theme:terminalThemeFor($theme),cursorStyle:'block',cursorBlink:true,disableStdin:true})
   term.open(box)
   let closed=false, id='', owner=false
   let pending=Promise.resolve()
@@ -57,7 +57,7 @@
 </div>
 <style>
  .overlay{position:fixed;inset:0;background:color-mix(in srgb,var(--bg-solid) 55%,transparent);backdrop-filter:blur(6px);display:grid;place-items:center;z-index:20}
- .window{width:88vw;height:84vh;display:flex;flex-direction:column;overflow:hidden;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius)}
+ .window{width:88vw;height:84vh;display:flex;flex-direction:column;overflow:hidden;background:color-mix(in srgb,var(--bg-solid) 90%,transparent);backdrop-filter:blur(30px);border:1px solid var(--border);border-radius:var(--radius)}
  header{display:flex;align-items:center;gap:12px;height:36px;padding:0 6px 0 14px;border-bottom:1px solid var(--border-subtle)}
  header span{flex:1;text-transform:uppercase;letter-spacing:.08em;font:600 11px var(--mono)}
  em{font:11px var(--mono);color:var(--text-3)}

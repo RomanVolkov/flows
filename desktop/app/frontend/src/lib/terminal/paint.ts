@@ -29,13 +29,16 @@ export interface Look {
 }
 
 export function paint(ctx: CanvasRenderingContext2D, s: Screen, m: Metrics, focused: boolean, selected?: (x: number, y: number) => boolean,
-  look: Look = { cursor: '#d8dbe2', selection: '#3b5a8a', selectionInk: '' }) {
+  look: Look = { cursor: '#d8dbe2', selection: '#3b5a8a', selectionInk: '' }, backgroundOpacity = 1) {
   // cell edges on device pixels: a cell is a fraction of a pixel wide, and two backgrounds that
   // meet inside a pixel let the screen's own show through as a thin vertical line
   const dpr = ctx.getTransform().a || 1
   const edge = (x: number) => Math.round(x * m.w * dpr) / dpr
+  ctx.clearRect(0, 0, s.cols * m.w, s.rows * m.h)
+  ctx.globalAlpha = Math.max(0, Math.min(1, backgroundOpacity))
   ctx.fillStyle = '#' + s.bg.toString(16).padStart(6, '0')
   ctx.fillRect(0, 0, s.cols * m.w, s.rows * m.h)
+  ctx.globalAlpha = 1
   ctx.textBaseline = 'middle'
   let font = ''
   for (let y = 0; y < s.rows; y++) {
@@ -51,9 +54,11 @@ export function paint(ctx: CanvasRenderingContext2D, s: Screen, m: Metrics, focu
         if (look.selectionInk) fg = look.selectionInk
       }
       if (bg) {
+        ctx.globalAlpha = Math.max(0, Math.min(1, backgroundOpacity))
         ctx.fillStyle = bg
         ctx.fillRect(edge(x), y * m.h, edge(x + span) - edge(x), m.h)
       }
+      ctx.globalAlpha = 1
       if (!c.t) continue
       const f = `${a & ATTR.italic ? 'italic ' : ''}${a & ATTR.bold ? 'bold ' : ''}${m.size}px ${m.font}`
       if (f !== font) ctx.font = font = f // parsing a font is dear: a screen has thousands of cells

@@ -132,6 +132,7 @@ type Config struct {
 	Args          []string
 	Env           []string
 	InitialPrompt string
+	InitialScreen []byte
 	Cols          uint16
 	Rows          uint16
 	State         terminal.TerminalState
@@ -144,6 +145,8 @@ type Host struct {
 	stateDir      string
 	recordPath    string
 	snapshotPath  string
+	screenPath    string
+	screenSaved   time.Time
 	exitPath      string
 	pty           *os.File
 	cmd           *exec.Cmd
@@ -229,17 +232,20 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 			listener.Close()
 			return nil, err
 		}
+		if len(cfg.InitialScreen) > 0 {
+			cfg.State.Feed(cfg.InitialScreen, nil)
+		}
 	}
 
 	cmd := exec.Command(cfg.Command, cfg.Args...)
 	if cfg.WorkDir != "" {
 		cmd.Dir = cfg.WorkDir
 	}
-	if len(cfg.Env) > 0 {
-		cmd.Env = cfg.Env
-	} else {
-		cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	env := cfg.Env
+	if len(env) == 0 {
+		env = os.Environ()
 	}
+	cmd.Env = setEnv(setEnv(env, "TERM", "xterm-256color"), "COLORTERM", "truecolor")
 
 	master, err := pty.StartWithSize(cmd, &winsize)
 	if err != nil {
@@ -260,6 +266,7 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 		stateDir:      cfg.StateDir,
 		recordPath:    filepath.Join(cfg.StateDir, "host.json"),
 		snapshotPath:  filepath.Join(cfg.StateDir, "snapshot.bin"),
+		screenPath:    filepath.Join(cfg.StateDir, "screen.json"),
 		exitPath:      filepath.Join(cfg.StateDir, "exit.json"),
 		pty:           master,
 		cmd:           cmd,
@@ -322,6 +329,17 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 	return h, nil
 }
 
+func setEnv(env []string, key, value string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, item := range env {
+		name, _, ok := strings.Cut(item, "=")
+		if !ok || name != key {
+			out = append(out, item)
+		}
+	}
+	return append(out, key+"="+value)
+}
+
 // WaitCheckoutReady blocks until host and child identities are durably persisted.
 func (h *Host) WaitCheckoutReady(ctx context.Context) error {
 	select {
@@ -375,6 +393,11 @@ func (h *Host) Resize(cols, rows, x, y uint16) error {
 	h.record.Rows = rows
 	_ = h.persistRecordLocked()
 	h.broadcastLocked(Frame{Kind: FrameSize, Seq: h.record.StreamSeq, Payload: encodeWinsize(size)})
+	if state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) }); ok {
+		if payload, err := state.SnapshotFrame(); err == nil {
+			h.broadcastLocked(Frame{Kind: FrameScreen, Seq: h.record.StreamSeq, Payload: payload})
+		}
+	}
 	h.mu.Unlock()
 	return nil
 }
@@ -454,7 +477,7 @@ func (h *Host) run(ctx context.Context) {
 	})
 	defer unblock()
 
-	buf := make([]byte, maxFramePayload)
+	buf := make([]byte, maxPTYRead)
 	for {
 		n, err := h.pty.Read(buf)
 		if n > 0 {
@@ -495,6 +518,7 @@ func (h *Host) run(ctx context.Context) {
 	h.record.ExitSignal = exitSignal
 	h.record.ExitedAt = now
 
+	h.persistScreenLocked(true)
 	snap := h.snapshotLocked()
 	h.cfg.State = nil
 	h.scrollback = snap
@@ -541,12 +565,18 @@ func (h *Host) publishOutput(data []byte) {
 			replyTo = h.pty
 		}
 		h.cfg.State.Feed(chunk, replyTo)
+		h.persistScreenLocked(false)
 	}
 	h.broadcastLocked(Frame{
 		Kind:    FrameOutput,
 		Seq:     h.record.StreamSeq,
 		Payload: chunk,
 	})
+	if state, ok := h.cfg.State.(interface{ RenderFrame(bool) ([]byte, error) }); ok {
+		if payload, err := state.RenderFrame(false); err == nil && len(payload) > 0 {
+			h.broadcastLocked(Frame{Kind: FrameScreen, Seq: h.record.StreamSeq, Payload: payload})
+		}
+	}
 }
 
 func (h *Host) appendScrollbackLocked(chunk []byte) {
@@ -568,6 +598,42 @@ func (h *Host) Preview() []byte {
 	defer h.mu.Unlock()
 	return h.snapshotLocked()
 }
+
+// PreviewFrame returns a full libghostty render-state frame for canvas previews.
+func (h *Host) PreviewFrame() []byte {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) })
+	if ok {
+		frame, err := state.SnapshotFrame()
+		if err == nil && len(frame) > 0 {
+			return frame
+		}
+	}
+	frame, _ := os.ReadFile(h.screenPath)
+	return frame
+}
+
+// persistScreenLocked keeps Carson-compatible cell frames for right-panel previews after the
+// live host is no longer in memory. The snapshot path is distinct from snapshot.bin, which keeps
+// the ANSI replay used to resume a conversation.
+func (h *Host) persistScreenLocked(final bool) {
+	if h.cfg.State == nil || (!final && time.Since(h.screenSaved) < 2*time.Second) {
+		return
+	}
+	state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) })
+	if !ok {
+		return
+	}
+	frame, err := state.SnapshotFrame()
+	if err != nil || len(frame) == 0 {
+		return
+	}
+	if writeFileAtomic(h.screenPath, frame, 0600) == nil {
+		h.screenSaved = time.Now()
+	}
+}
+
 func (h *Host) snapshotLocked() []byte {
 	if h.cfg.State != nil {
 		if replay, err := h.cfg.State.Replay(); err == nil {

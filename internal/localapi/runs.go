@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/romanvolkov/flows/desktop/theme"
 	"github.com/romanvolkov/flows/internal/config"
 	"github.com/romanvolkov/flows/internal/harness"
 	"github.com/romanvolkov/flows/internal/host"
@@ -67,8 +69,9 @@ type RunManager struct {
 	store    *store.Store
 	sessions *SessionManager
 
-	mu    sync.Mutex
-	hosts map[string]*host.Host
+	mu      sync.Mutex
+	hosts   map[string]*host.Host
+	watched map[string]bool
 }
 
 // NewRunManager creates a RunManager backed by home, st, and sessions.
@@ -78,6 +81,7 @@ func NewRunManager(home paths.Home, st *store.Store, sessions *SessionManager) *
 		store:    st,
 		sessions: sessions,
 		hosts:    make(map[string]*host.Host),
+		watched:  make(map[string]bool),
 	}
 }
 
@@ -222,6 +226,7 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 	m.mu.Lock()
 	if h, ok := m.hosts[intent.AttemptID]; ok {
 		m.mu.Unlock()
+		m.watchHost(h)
 		rec := h.Record()
 		return CreateRunResponse{
 			RequestID:  intent.RequestID,
@@ -242,6 +247,7 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 		m.sessions.adopted[insp.Record.SessionID] = insp.Record
 		m.sessions.leases[insp.Record.AttemptID] = host.LeaseHeld
 		m.sessions.mu.Unlock()
+		m.watchAdoptedHost(context.Background(), insp.Record)
 
 		intent.State = "started"
 		_ = m.saveIntent(intent)
@@ -265,6 +271,7 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 		Command:       intent.Command,
 		Args:          intent.Args,
 		InitialPrompt: intent.Prompt,
+		InitialScreen: []byte(theme.TerminalOSC()),
 	})
 	if err != nil {
 		return CreateRunResponse{}, err
@@ -278,6 +285,7 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 	m.mu.Lock()
 	m.hosts[intent.AttemptID] = h
 	m.mu.Unlock()
+	m.watchHost(h)
 
 	m.sessions.mu.Lock()
 	m.sessions.adopted[rec.SessionID] = rec
@@ -298,6 +306,78 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 	}, nil
 }
 
+// WatchAdoptedHosts follows sessions that survived a daemon restart. Newly
+// launched sessions are followed directly through their Host.Wait result.
+func (m *RunManager) WatchAdoptedHosts(ctx context.Context) {
+	for _, session := range m.sessions.List() {
+		if session.Status == "exited" {
+			continue
+		}
+		rec, err := host.LoadRecord(filepath.Join(m.home.State, "hosts", session.SessionID))
+		if err == nil {
+			m.watchAdoptedHost(ctx, rec)
+		}
+	}
+}
+
+func (m *RunManager) watchHost(h *host.Host) {
+	rec := h.Record()
+	m.mu.Lock()
+	if m.watched[rec.AttemptID] {
+		m.mu.Unlock()
+		return
+	}
+	m.watched[rec.AttemptID] = true
+	m.mu.Unlock()
+	go func() { m.completeHostExit(h.Wait()) }()
+}
+
+func (m *RunManager) watchAdoptedHost(ctx context.Context, rec host.Record) {
+	m.mu.Lock()
+	if m.watched[rec.AttemptID] {
+		m.mu.Unlock()
+		return
+	}
+	m.watched[rec.AttemptID] = true
+	m.mu.Unlock()
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current, err := host.LoadRecord(filepath.Join(m.home.State, "hosts", rec.SessionID))
+				if err == nil && (current.Status == "exited" || current.ExitCode != nil) {
+					m.completeHostExit(current)
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (m *RunManager) completeHostExit(rec host.Record) {
+	if rec.AttemptID == "" || rec.ExitCode == nil {
+		return
+	}
+	status := store.Succeeded
+	if *rec.ExitCode != 0 {
+		status = store.Failed
+	}
+	eventID := "host-exit-" + rec.StartNonce
+	payload, _ := json.Marshal(struct {
+		ExitCode   int    `json:"exit_code"`
+		ExitSignal string `json:"signal"`
+	}{*rec.ExitCode, rec.ExitSignal})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := m.store.Complete(ctx, rec.AttemptID, eventID, status, payload); err == nil && m.sessions != nil {
+		m.sessions.RecordExit(rec)
+	}
+}
+
 // LaunchSession commits the intent and ensures the host is started or adopted.
 func (m *RunManager) LaunchSession(ctx context.Context, req CreateRunRequest) (CreateRunResponse, error) {
 	intent, err := m.CommitIntent(ctx, req)
@@ -305,6 +385,77 @@ func (m *RunManager) LaunchSession(ctx context.Context, req CreateRunRequest) (C
 		return CreateRunResponse{}, err
 	}
 	return m.EnsureHostStarted(ctx, intent)
+}
+
+// ResumeSession creates a new attempt on the existing node and resumes the
+// harness conversation captured in the preceding attempt's terminal screen.
+func (m *RunManager) ResumeSession(ctx context.Context, nodeID string) (CreateRunResponse, error) {
+	node, err := m.store.Node(ctx, nodeID)
+	if err != nil {
+		return CreateRunResponse{}, err
+	}
+	if node.AttemptID == nil {
+		return CreateRunResponse{}, errors.New("node has no previous attempt to resume")
+	}
+	previous, err := m.loadIntent(m.intentByAttemptPath(*node.AttemptID))
+	if err != nil {
+		return CreateRunResponse{}, fmt.Errorf("load previous harness session: %w", err)
+	}
+	adapter, err := harness.ForKind(previous.Harness)
+	if err != nil {
+		return CreateRunResponse{}, err
+	}
+	caps, err := adapter.Probe(ctx, previous.Profile.Executable)
+	if err != nil {
+		return CreateRunResponse{}, err
+	}
+	if !caps.SupportsResume {
+		return CreateRunResponse{}, fmt.Errorf("%s does not support conversation resume", previous.Harness)
+	}
+
+	m.mu.Lock()
+	active := m.hosts[*node.AttemptID]
+	m.mu.Unlock()
+	var screen []byte
+	if active != nil {
+		screen = active.Preview()
+	} else {
+		screen, err = os.ReadFile(filepath.Join(m.home.State, "hosts", previous.SessionID, "snapshot.bin"))
+		if err != nil {
+			return CreateRunResponse{}, fmt.Errorf("read previous session screen: %w", err)
+		}
+	}
+	conversationID, _, ok := adapter.ParseConversationRef(screen)
+	if !ok {
+		return CreateRunResponse{}, fmt.Errorf("could not find a %s conversation ID in the previous session screen", previous.Harness)
+	}
+	resolved, err := adapter.BuildLaunch(caps, harness.LaunchSpec{
+		Profile: previous.Profile, WorkDir: previous.WorkDir, ConversationID: conversationID, Resume: true,
+	})
+	if err != nil {
+		return CreateRunResponse{}, err
+	}
+	attempt, err := m.store.ResumeAttempt(ctx, nodeID)
+	if err != nil {
+		return CreateRunResponse{}, err
+	}
+	sessionID := "sess-" + shortHex(8)
+	intent := LaunchIntent{
+		RequestID: "resume-" + attempt.ID, RunID: node.RunID, NodeID: node.ID,
+		AttemptID: attempt.ID, SessionID: sessionID, Harness: previous.Harness,
+		WorkDir: previous.WorkDir, Profile: previous.Profile, Command: resolved.Argv[0],
+		Args: append([]string(nil), resolved.Argv[1:]...), SocketPath: filepath.Join(m.home.Runtime, "h-"+sessionID+".sock"), State: "committed",
+	}
+	if err := m.saveIntent(intent); err != nil {
+		_ = m.store.Transition(ctx, nodeID, store.Interrupted, nil)
+		return CreateRunResponse{}, fmt.Errorf("save resumed launch: %w", err)
+	}
+	response, err := m.EnsureHostStarted(ctx, intent)
+	if err != nil {
+		_ = m.store.Transition(ctx, nodeID, store.Interrupted, nil)
+		return CreateRunResponse{}, err
+	}
+	return response, nil
 }
 
 // ReconcileIntents reconciles unfinished committed intents on daemon startup.
@@ -396,6 +547,22 @@ func handleRuns(w http.ResponseWriter, r *http.Request, runs *RunManager) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func handleNodeResume(w http.ResponseWriter, r *http.Request, runs *RunManager, nodeID string) {
+	if !method(w, r, http.MethodPost) {
+		return
+	}
+	if runs == nil {
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "run manager not configured")
+		return
+	}
+	response, err := runs.ResumeSession(r.Context(), nodeID)
+	if err != nil {
+		writeError(w, http.StatusConflict, "resume_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func safeID(s string) string {
 	return strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
@@ -421,23 +588,29 @@ func (m *RunManager) preview(w http.ResponseWriter, attempt string) {
 	h := m.hosts[attempt]
 	m.mu.Unlock()
 	var data []byte
+	var frame []byte
 	var err error
 	if h != nil {
 		data = h.Preview()
+		frame = h.PreviewFrame()
 	} else {
 		var intent LaunchIntent
 		intent, err = m.loadIntent(m.intentByAttemptPath(attempt))
 		if err == nil {
 			data, err = os.ReadFile(filepath.Join(m.home.State, "hosts", intent.SessionID, "snapshot.bin"))
+			frame, _ = os.ReadFile(filepath.Join(m.home.State, "hosts", intent.SessionID, "screen.json"))
 		}
 	}
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) && len(frame) == 0 {
 		writeJSON(w, 200, map[string]string{"screen": ""})
 		return
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		err = nil
 	}
 	if err != nil {
 		writeError(w, 500, "preview_failed", "Could not read the session preview")
 		return
 	}
-	writeJSON(w, 200, map[string][]byte{"screen": data})
+	writeJSON(w, 200, map[string][]byte{"screen": data, "frame": frame})
 }

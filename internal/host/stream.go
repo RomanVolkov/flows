@@ -33,9 +33,11 @@ const (
 	FrameControl
 	FrameInputOwner
 	FrameExit
+	FrameScreen
 
 	frameHeaderSize = 13
-	maxFramePayload = 32 * 1024
+	maxFramePayload = 8 * 1024 * 1024
+	maxPTYRead      = 32 * 1024
 )
 
 // Frame is a binary terminal protocol frame exchanged over /v1/sessions/{id}/attach.
@@ -50,6 +52,7 @@ type ControlMessage struct {
 	Type   string `json:"type"`
 	Seq    uint64 `json:"seq,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	Rows   int    `json:"rows,omitempty"`
 }
 
 // InputOwnerEvent is the JSON payload for FrameInputOwner.
@@ -158,6 +161,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(int64(maxFramePayload + frameHeaderSize))
 	defer conn.CloseNow()
 
 	q := r.URL.Query()
@@ -194,6 +198,10 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	replay := h.snapshotLocked()
+	var screenReplay []byte
+	if state, ok := h.cfg.State.(interface{ SnapshotFrame() ([]byte, error) }); ok {
+		screenReplay, _ = state.SnapshotFrame()
+	}
 	seq := h.record.StreamSeq
 	cols, rows := h.record.Cols, h.record.Rows
 	finished := h.finished
@@ -241,14 +249,20 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		return
 	}
-	for off := 0; off < len(replay); off += maxFramePayload {
-		end := min(off+maxFramePayload, len(replay))
-		if err := writeWSFrame(ctx, conn, Frame{
-			Kind:    FrameOutput,
-			Seq:     seq,
-			Payload: replay[off:end],
-		}); err != nil {
+	if len(screenReplay) > 0 {
+		if err := writeWSFrame(ctx, conn, Frame{Kind: FrameScreen, Seq: seq, Payload: screenReplay}); err != nil {
 			return
+		}
+	} else {
+		for off := 0; off < len(replay); off += maxFramePayload {
+			end := min(off+maxFramePayload, len(replay))
+			if err := writeWSFrame(ctx, conn, Frame{
+				Kind:    FrameOutput,
+				Seq:     seq,
+				Payload: replay[off:end],
+			}); err != nil {
+				return
+			}
 		}
 	}
 	if err := writeWSFrame(ctx, conn, controlFrame(ControlMessage{Type: "replay_end", Seq: seq}, seq)); err != nil {
@@ -374,6 +388,18 @@ func (h *Host) handleClientFrame(clientID string, frame Frame, reply func(Frame)
 			if isOwner {
 				go func() { _ = h.RequestStop(2 * time.Second) }()
 			}
+		case "scroll":
+			if state, ok := h.cfg.State.(interface{ Scroll(int) (bool, error) }); ok {
+				if _, err := state.Scroll(ctrl.Rows); err == nil {
+					if render, ok := h.cfg.State.(interface{ RenderFrame(bool) ([]byte, error) }); ok {
+						if payload, err := render.RenderFrame(true); err == nil {
+							h.mu.Lock()
+							h.broadcastLocked(Frame{Kind: FrameScreen, Seq: h.record.StreamSeq, Payload: payload})
+							h.mu.Unlock()
+						}
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -432,6 +458,7 @@ func DialAttach(ctx context.Context, socketPath, sessionID string, opts AttachOp
 	if err != nil {
 		return nil, err
 	}
+	conn.SetReadLimit(int64(maxFramePayload + frameHeaderSize))
 	return &AttachConn{conn: conn}, nil
 }
 
