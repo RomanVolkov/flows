@@ -16,6 +16,7 @@ import (
 	"github.com/romanvolkov/flows/internal/builtin"
 	"github.com/romanvolkov/flows/internal/catalog"
 	"github.com/romanvolkov/flows/internal/config"
+	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/plugin"
 	"github.com/romanvolkov/flows/internal/store"
@@ -27,6 +28,8 @@ var errStaleWorkflow = errors.New("workflow is unavailable or has changed since 
 type workflowRunner struct {
 	ctx           context.Context
 	state         *store.Store
+	runs          *RunManager
+	results       map[string]*harnessResultScope
 	library       *libraryReconciler
 	mu            sync.Mutex
 	cancellations map[string]context.CancelFunc
@@ -205,7 +208,7 @@ func (r *workflowRunner) execute(ctx context.Context, run store.WorkflowRun, spe
 		}
 		step := remaining[next]
 		remaining = append(remaining[:next], remaining[next+1:]...)
-		bind.NodeOutputs[step.StepID], err = r.executeWorkflowStep(ctx, run, spec, step, def.Nodes[step.StepID], bind, len(dependencies[step.StepID]) > 0)
+		bind.NodeOutputs[step.StepID], err = r.executeWorkflowStep(ctx, run, spec, step, def.Nodes[step.StepID], snapshot, bind, len(dependencies[step.StepID]) > 0)
 	}
 	status := store.Succeeded
 	output := make(map[string]any)
@@ -238,7 +241,7 @@ func (r *workflowRunner) execute(ctx context.Context, run store.WorkflowRun, spe
 	_ = r.state.FinishWorkflowNode(saveCtx, run.NodeID, status, output, message)
 }
 
-func (r *workflowRunner) executeWorkflowStep(ctx context.Context, run store.WorkflowRun, spec store.NewWorkflowRun, step store.WorkflowStep, node workflow.NodeSpec, bind workflow.BindContext, waiting bool) (map[string]any, error) {
+func (r *workflowRunner) executeWorkflowStep(ctx context.Context, run store.WorkflowRun, spec store.NewWorkflowRun, step store.WorkflowStep, node workflow.NodeSpec, snapshot *workflow.LaunchSnapshot, bind workflow.BindContext, waiting bool) (map[string]any, error) {
 	if waiting {
 		if err := r.state.Transition(ctx, step.NodeID, store.Ready, nil); err != nil {
 			return nil, err
@@ -253,7 +256,7 @@ func (r *workflowRunner) executeWorkflowStep(ctx context.Context, run store.Work
 	var outputs map[string]any
 	if err == nil {
 		if err = r.state.MarkWorkflowStepInFlight(ctx, step.NodeID); err == nil {
-			outputs, err = r.invokeWorkflowStep(ctx, run, spec, step, node, attempt, with)
+			outputs, err = r.invokeWorkflowStep(ctx, run, spec, step, node, attempt, snapshot, with)
 		}
 	}
 	if r.ctx.Err() != nil {
@@ -270,12 +273,20 @@ func (r *workflowRunner) executeWorkflowStep(ctx context.Context, run store.Work
 	if saveErr := r.state.FinishWorkflowNode(r.ctx, step.NodeID, status, outputs, message); saveErr != nil {
 		return nil, saveErr
 	}
+	if node.Uses == "core.harness" && status == store.Succeeded {
+		if outbox, err := host.NewOutbox(r.library.home.State, attempt.ID); err == nil {
+			_ = outbox.MarkDelivered("workflow-result")
+		}
+	}
 	return outputs, err
 }
 
-func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.WorkflowRun, spec store.NewWorkflowRun, step store.WorkflowStep, node workflow.NodeSpec, attempt store.Attempt, with map[string]any) (map[string]any, error) {
+func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.WorkflowRun, spec store.NewWorkflowRun, step store.WorkflowStep, node workflow.NodeSpec, attempt store.Attempt, snapshot *workflow.LaunchSnapshot, with map[string]any) (map[string]any, error) {
 	if node.When != "" || node.ForEach != nil || node.Repeat != nil || node.Watch != nil || node.Workflow != "" {
 		return nil, fmt.Errorf("workflow step %s uses an unsupported execution rule", step.StepID)
+	}
+	if node.Uses == "core.harness" {
+		return r.executeHarness(ctx, spec, step, attempt, snapshot, with)
 	}
 	if node.Uses == "core.command" {
 		command, _ := with["command"].(string)

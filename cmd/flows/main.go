@@ -23,6 +23,9 @@ func main() {
 
 func run() int {
 	args := os.Args[1:]
+	if len(args) == 3 && args[0] == "bridge" && args[1] == "result" {
+		return runWorkflowResult(args[2])
+	}
 	if len(args) >= 2 && args[0] == "validate" {
 		return runValidate(args[1:])
 	}

@@ -60,7 +60,7 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	if err := state.MarkUnfinishedRunsInterrupted(ctx); err != nil {
 		return fmt.Errorf("mark interrupted workflows: %w", err)
 	}
-	workflows := &workflowRunner{ctx: ctx, state: state, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
+	workflows := &workflowRunner{ctx: ctx, state: state, runs: runs, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
 	defer workflows.wg.Wait()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
@@ -132,7 +132,7 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && r.URL.Path != "/v1/workflows/result" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -170,6 +170,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			}
 		case "/v1/runs":
 			handleRuns(w, r, runs)
+		case "/v1/workflows/result":
+			workflows.submitHarnessResult(w, r)
 		case "/v1/workflows", "/v1/workflows/run":
 			workflows.serveHTTP(w, r)
 		case "/v1/library":
