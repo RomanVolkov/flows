@@ -11,6 +11,21 @@
  let harnesses=$state<{id:string;version:string}[]>([])
  const harnessCacheKey='flows.available-harnesses.v1'
  let folder=$state<HTMLInputElement>()
+ let listOpen=$state(false), pick=$state(-1)
+ const matches=$derived(history.filter(path=>path.toLowerCase().includes(repo.trim().toLowerCase())))
+ function choose(path:string){repo=path;listOpen=false;pick=-1}
+ function repoKey(e: KeyboardEvent) {
+    if (!listOpen || matches.length === 0) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const n = matches.length
+      pick = e.key === 'ArrowDown' ? (pick + 1) % n : (pick - 1 + n) % n
+    } else if (e.key === 'Enter' && pick >= 0) {
+      e.preventDefault()
+      choose(matches[pick])
+    }
+  }
+
  const id=crypto.randomUUID()
  function changeScenario(next:string){scenario=next;review=undefined;error=''}
  onMount(()=>{
@@ -58,7 +73,7 @@
   }catch(e){error=String(e)}finally{busy=false}
  }
 </script>
-<div class="overlay" role="dialog" aria-modal="true" aria-label="New session" tabindex="-1" onclick={e=>{if(e.target===e.currentTarget)close()}} onkeydown={(e)=>{if(e.key==='Escape'){e.preventDefault();close()}else if(e.metaKey&&e.key==='Enter'){e.preventDefault();create()}}}>
+<div class="overlay" role="dialog" aria-modal="true" aria-label="New session" tabindex="-1" onclick={e=>{if(e.target===e.currentTarget)close()}} onkeydown={(e)=>{if(e.key==='Escape'){e.preventDefault();if(listOpen && matches.length)listOpen=false;else close()}else if(e.metaKey&&e.key==='Enter'){e.preventDefault();e.currentTarget.querySelector<HTMLButtonElement>('button.primary')?.click()}}}>
  <form class="dialog" onsubmit={(e)=>{e.preventDefault();create()}}>
   <h2>New</h2>
   <label for="scenario">Scenario</label>
@@ -73,8 +88,23 @@
   {/if}
   {#if scenario==='session'||scenario==='authoring'}
    <label for="repo">{scenario==='authoring'?'Working folder':'Repo'}</label>
-   <input id="repo" bind:this={folder} bind:value={repo} list="repos" placeholder="A local repo or ~/path; empty for a plain chat"/>
-   <datalist id="repos">{#each history as path}<option value={path}></option>{/each}</datalist>
+   <div class="combo">
+      <input id="repo" bind:this={folder} bind:value={repo} autocomplete="off" spellcheck="false"
+        placeholder="A local repo or ~/path; empty for a plain chat"
+        onfocus={() => (listOpen = true)} oninput={() => { listOpen = true; pick = -1 }} onkeydown={repoKey}
+        onblur={() => setTimeout(() => (listOpen = false), 120)} />
+      {#if listOpen && matches.length}
+        <ul class="list" role="listbox">
+          {#each matches as r, i}
+            <li role="option" aria-selected={i === pick} class:on={i === pick}
+              onmousedown={(e) => { e.preventDefault(); choose(r) }}>
+              <span class="mono">{r}</span>
+              <span class="kind">folder</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+   </div>
    {#if scenario==='session'}<p class="hint">{repo.trim()?'Works in this folder.':'A plain chat, in an empty folder of its own.'}</p>{/if}
    <label for="agent">Agent</label>
    <select id="agent" bind:value={agent}>{#if !harnesses.length}<option value="">{harnessesLoading?'Checking installed agents…':'No supported agents found'}</option>{/if}{#each harnesses as harness}<option value={harness.id}>{harness.id}</option>{/each}</select>
@@ -93,12 +123,20 @@
  </form>
 </div>
 <style>
- .overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:color-mix(in srgb,var(--bg-solid) 55%,transparent);backdrop-filter:blur(6px)}
- .dialog{width:min(560px,100%);max-height:calc(100vh - 48px);overflow:auto;margin:0;padding:18px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;gap:6px;font-size:13px}
+ .overlay{position:fixed;inset:0;z-index:20;display:flex;align-items:flex-start;justify-content:center;padding:12vh 16px 16px;background:color-mix(in srgb,var(--bg-solid) 55%,transparent);backdrop-filter:blur(6px)}
+ .dialog{width:min(560px,100%);max-height:calc(88vh - 16px);overflow:auto;margin:0;padding:18px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;gap:6px;font-size:13px}
  h2{font:600 15px var(--sans);margin-bottom:4px}
  label,small{font:600 11px var(--mono);color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-top:8px}
  .hint{color:var(--text-3);font-size:12px}
  .choice-set{border:0;margin:0;padding:0;min-width:0}.choice-set legend{font:600 11px var(--mono);color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin:8px 0}.kind-choice{display:flex;gap:4px}.kind-choice button{height:30px;flex:1;justify-content:center}.kind-choice button.selected{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,var(--border));background:var(--accent-glow)}
+ .combo { position: relative; }
+  .combo input { width: 100%; }
+  .list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 1; list-style: none; padding: 4px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); max-height: 260px; overflow: auto; }
+  .list li { display: flex; justify-content: space-between; gap: 12px; padding: 5px 8px; border-radius: 4px; cursor: pointer; }
+  .list li:hover, .list li.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .list .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  .list .kind { color: var(--text-3); font-size: 11px; white-space: nowrap; }
  .refresh{margin:0;font-size:11px}
  .diagnostics{margin:2px 0;padding-left:22px;color:var(--danger);font:11px/1.5 var(--mono);max-height:150px;overflow:auto}.diagnostics code{color:var(--text-3)}.valid{color:var(--green)}.invalid{color:var(--danger)}
  #agent{align-self:flex-start}

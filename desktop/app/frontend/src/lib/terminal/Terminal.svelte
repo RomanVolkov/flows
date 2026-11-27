@@ -37,7 +37,7 @@
     const ctx = canvas.getContext('2d')!
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     paint(ctx, screen, metrics, document.activeElement === input, (x, y) => contains(selection, x, y),
-      { cursor: $theme.cursor, selection: $theme.selection_background, selectionInk: $theme.selection_foreground }, $theme.background_opacity)
+      { cursor: $theme.cursor, selection: $theme.selection_background, selectionInk: $theme.selection_foreground })
   }
   $effect(() => {
     screen
@@ -77,11 +77,13 @@
     async function connect() {
       try {
         terminalId = await api.Attach(sessionId)
+        if (stopped) { await api.Detach(terminalId); return }
         while (!stopped) {
           const frame = JSON.parse(await api.ReadTerminal(terminalId)) as { kind: number; payload: string }
           const bytes = Uint8Array.from(atob(frame.payload ?? ''), (c) => c.charCodeAt(0))
           if (frame.kind === 7) {
             hasScreen = true
+            output = ''
             screen = applyFrame(screen, JSON.parse(new TextDecoder().decode(bytes)))
             status = ''
           } else if (frame.kind === 1 && !hasScreen) {
@@ -92,7 +94,7 @@
             status = owner ? '' : `Viewing · input owned by another terminal · ${agent}`
             if (owner) fitSize()
           } else if (frame.kind === 6) {
-            status = 'Session ended'
+            if (!stopped) onclose()
             break
           }
         }
@@ -236,7 +238,7 @@
 <style>
   .overlay { position: fixed; inset: 0; background: color-mix(in srgb, var(--bg-solid) 55%, transparent); backdrop-filter: blur(6px);
     display: flex; align-items: center; justify-content: center; z-index: 10; }
-  .window { width: 88vw; height: 84vh; background: transparent; backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: var(--radius);
+  .window { width: 88vw; height: 84vh; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
     display: flex; flex-direction: column; overflow: hidden; }
   header { display: flex; gap: 12px; align-items: center; height: 36px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--border-subtle); }
   header span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 11px var(--mono);

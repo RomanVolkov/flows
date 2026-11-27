@@ -244,7 +244,8 @@ func main() {
 	}
 	app := &App{home: home}
 	err = wails.Run(&options.App{Title: "Flows", Width: 1280, Height: 820, MinWidth: 700, MinHeight: 440,
-		AssetServer: &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened}, OnStartup: app.startup,
+		BackgroundColour: &options.RGBA{},
+		AssetServer:      &assetserver.Options{Assets: assets}, Mac: &mac.Options{TitleBar: mac.TitleBarHidden(), WebviewIsTransparent: true, WindowIsTranslucent: true, Appearance: mac.NSAppearanceNameDarkAqua, OnFileOpen: app.opened}, OnStartup: app.startup,
 		SingleInstanceLock: &options.SingleInstanceLock{UniqueId: "dev.flows.app", OnSecondInstanceLaunch: func(options.SecondInstanceData) { app.focusWindow() }},
 		Bind:               []interface{}{app}})
 	if err != nil {

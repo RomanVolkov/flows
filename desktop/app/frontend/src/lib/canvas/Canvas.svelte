@@ -2,9 +2,9 @@
   import { onMount } from 'svelte'
   import type { Graph } from '../graph'
   import { hit, layout, shift, within, type Offsets } from './layout'
-  import { draw, moving, type Band } from './render'
+  import { draw, moving, type Colors, type Band } from './render'
   import { banded, click, dirOf, near, nearest, roots } from './select'
-  import { colors } from '../theme'
+  import { monoStack, stateColors, theme } from '../theme'
   import { fit, onWheel, pan, reveal, toLayout, zoomAt, type View } from './view'
 
   let { graph, selection = $bindable([]), attention = new Set(), onopen, onremove }: {
@@ -44,6 +44,12 @@
   }
   const base = $derived(layout(graph))
   const l = $derived(shift(base, graph, offsets))
+  const colors: Colors = $derived({
+    states: stateColors($theme), ink: $theme.foreground, dim: $theme.palette[8], selected: $theme.selection_background,
+    font: monoStack($theme),
+    attention: $theme.palette[5], bg: $theme.background,
+  })
+
   // while a node works its arc goes round: redraw about 30 times a second, and only then
   let now = $state(0)
   $effect(() => {

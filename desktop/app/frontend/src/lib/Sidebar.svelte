@@ -35,8 +35,8 @@
   <button disabled={busy} onclick={()=>onremove(node.id)}>Remove</button>
  </div>
  {#if sessions.length}<h3 class="label">Sessions</h3>
-  <ul class="sessions">{#each sessions as s}<li class="mono">{s.agent} · {s.mode} · {s.exit==null?'running':`exit ${s.exit}`}</li>{/each}</ul>
-  {#if sessions[sessions.length-1].attempt}<h3 class="label">Preview</h3><div class="screen"><Preview attempt={sessions[sessions.length-1].attempt!}/></div>{/if}
+  <ul class="sessions">{#each sessions as s}<li class="mono" use:copy={s.id}>{s.agent} · {s.mode} · {s.exit==null?'running':`exit ${s.exit}`}</li>{/each}</ul>
+  {#if sessions[sessions.length-1].attempt}<h3 class="label">Screen</h3>{#key sessions.at(-1)!.attempt + ":" + (sessions.at(-1)!.exit == null)}<Preview attempt={sessions.at(-1)!.attempt!} onopen={sessions.at(-1)!.exit == null ? ()=>onattach(selected) : undefined}/>{/key}{/if}
  {/if}
  {#if totals?.requests}<h3 class="label">Usage</h3><TotalsView t={totals}/>{/if}
  {#if error}<p class="error">{error}</p>{/if}
@@ -47,6 +47,9 @@
  .state{margin:4px 0 0 18px;color:var(--text-2);font-size:12px}dl{display:grid;grid-template-columns:3.5rem 1fr;gap:4px 10px;margin:14px 0;align-items:baseline}dd{overflow-wrap:anywhere;color:var(--text-2);font-size:12px}
  h3{margin:18px 0 6px}.block{white-space:pre-wrap;background:var(--surface);border:1px solid var(--border-subtle);padding:8px 10px;border-radius:var(--radius);font:12px/1.5 var(--mono);color:var(--text-2)}
  .edge{color:var(--text-3);font-size:12px;margin:4px 0}.buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.error{color:var(--danger);font-size:12px}.hint{margin-top:8px}
- .screen{margin-top:8px;max-height:190px;overflow:hidden;border:1px solid var(--border-subtle);border-radius:var(--radius)}
- .sessions{list-style:none;display:grid;gap:4px;margin-top:6px}.sessions li{min-width:0;padding:5px 7px;border:1px solid var(--border-subtle);border-radius:var(--radius);background:var(--surface);color:var(--text-2);font-size:11px;overflow-wrap:anywhere}
+  :global(.copyable) { cursor: copy; position: relative; border-radius: 3px; }
+  :global(.copyable:hover) { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+  :global(.copyable[data-copied])::after { content: attr(data-copied); position: absolute; right: 4px; top: 0;
+    font: 11px var(--mono); color: var(--accent); background: var(--elevated); padding: 0 4px; }
+  ul { list-style: none; display: flex; flex-direction: column; gap: 2px; color: var(--text-2); font-size: 12px; }
 </style>

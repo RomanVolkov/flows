@@ -16,6 +16,12 @@ import (
 )
 
 func (a *App) Attach(attempt string) (string, error) {
+	return a.attach(attempt, false)
+}
+
+func (a *App) OpenPreview(attempt string) (string, error) { return a.attach(attempt, true) }
+
+func (a *App) attach(attempt string, preview bool) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	c := client.New(a.home.Socket())
@@ -29,7 +35,7 @@ func (a *App) Attach(attempt string) (string, error) {
 			continue
 		}
 		id := rand.Text()
-		conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{ClientID: id, Nonce: s.StartNonce})
+		conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{Preview: preview, ClientID: id, Nonce: s.StartNonce})
 		if err != nil {
 			return "", err
 		}
@@ -109,7 +115,5 @@ func (a *App) Sessions() (string, error) { return a.Request("sessions", "") }
 func (a *App) Screen(node, session string) (string, error) {
 	return a.Request("preview", "screen:"+node+"/"+session)
 }
-func (a *App) OpenPreview(session string) error          { return nil }
-func (a *App) ClosePreview(session string)               {}
 func (a *App) Daily(since string) (string, error)        { return a.Request("daily", since) }
 func (a *App) Totals(since, node string) (string, error) { return a.Request("usage", since) }

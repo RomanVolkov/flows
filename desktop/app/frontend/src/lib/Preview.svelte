@@ -5,11 +5,12 @@
   import { monoStack, theme } from './theme'
   import { request } from './workspace'
 
-  let { attempt }: { attempt: string } = $props()
+  let { attempt, onopen }: { attempt: string; onopen?: () => void } = $props()
   let canvas: HTMLCanvasElement
   let screen = $state<Screen | undefined>()
   let message = $state('Loading preview…')
   let metrics: Metrics | undefined
+  let connection = ''
   let timer = 0
   let stopped = false
   let pending = false
@@ -33,7 +34,7 @@
         cursor: $theme.cursor,
         selection: $theme.selection_background,
         selectionInk: $theme.selection_foreground,
-      }, $theme.background_opacity)
+      })
     })
   }
 
@@ -68,28 +69,56 @@
     } catch (error) {
       if (!stopped) message = String(error)
     }
-    if (!stopped) timer = window.setTimeout(refresh, 1500)
+    if (!stopped && onopen) timer = window.setTimeout(refresh, 1500)
+  }
+
+  async function follow() {
+    const api = window.go.main.App
+    try {
+      connection = await api.OpenPreview(attempt)
+      while (!stopped) {
+        const frame = JSON.parse(await api.ReadTerminal(connection))
+        if (stopped || frame.kind === 6) break
+        if (frame.kind === 7) {
+          screen = applyFrame(screen ?? blank(), JSON.parse(new TextDecoder().decode(decode(frame.payload))))
+          message = ''
+        } else if (frame.kind === 1 && !screen) {
+          break // Hosts without cell frames expose their text through the snapshot endpoint.
+        }
+      }
+    } catch {
+      // Previously launched hosts only support snapshot previews.
+    } finally {
+      if (connection) await api.Detach(connection).catch(() => {})
+      if (!stopped) void refresh()
+    }
   }
 
   onMount(() => {
     metrics = measure(canvas.getContext('2d')!, monoStack($theme), $theme.font_size)
-    refresh()
+    if (onopen) void follow()
+    else void refresh()
     return () => {
       stopped = true
       clearTimeout(timer)
+      if (connection) { void window.go.main.App.Detach(connection); connection = '' }
     }
   })
 </script>
 
-<div class="preview">
+<button class="preview" class:live={!!onopen} onclick={onopen} title={onopen ? "Open the terminal" : undefined}>
   <canvas bind:this={canvas} class:hidden={!screen} style:background={screen ? '#' + screen.bg.toString(16).padStart(6, '0') : undefined}></canvas>
   {#if !screen}
     <pre>{message}</pre>
   {/if}
-</div>
+</button>
 
 <style>
-  .preview { width: 100%; min-height: 48px; background: var(--surface); }
+
+  .preview { display: block; width: 100%; height: auto; padding: 6px; border: 1px solid var(--border-subtle); border-radius: var(--radius);
+    background: var(--surface); cursor: default; }
+  .preview.live { cursor: pointer; }
+  .preview.live:hover { border-color: var(--border); }
   canvas { display: block; width: 100%; height: auto; }
   canvas.hidden { display: none; }
   pre { margin: 0; padding: 8px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.4 var(--mono); }

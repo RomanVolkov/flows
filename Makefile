@@ -31,7 +31,7 @@ FRONTEND := desktop/app/frontend
 $(FRONTEND)/node_modules/.package-lock.json: $(FRONTEND)/package-lock.json $(FRONTEND)/package.json
 	@npm --prefix $(FRONTEND) ci --no-audit --no-fund
 
-desktop: $(FRONTEND)/node_modules/.package-lock.json
+desktop: desktop-fonts $(FRONTEND)/node_modules/.package-lock.json
 	@npm --prefix $(FRONTEND) run build
 	@$(GO) build -tags 'desktop production' -ldflags '-extldflags "-framework UniformTypeIdentifiers"' -trimpath -o "$(BIN)/Flows-desktop" ./desktop/app
 
@@ -95,3 +95,23 @@ install-spec:
 	@cp -R sdk/go/* "$${XDG_CONFIG_HOME:-$$HOME/.config}/flows/spec/v1/sdk/go/"
 
 include build/macos.mk
+
+.PHONY: desktop-fonts
+FONTS_VERSION := v3.4.0
+FONTS_SHA256 := cad9da572d25e3413f7a15a319d2f3c9e7e915ee016baa99e0d88fc08cf5b781
+FONTS_TAR := .deps/fonts/IosevkaTerm-$(FONTS_VERSION).tar.xz
+FONTS_DIR := $(FRONTEND)/src/assets/fonts/iosevka-term
+FONT_FACES := Regular Bold Italic BoldItalic
+
+desktop-fonts: $(FONTS_DIR)/IosevkaTermNerdFontMono-Regular.ttf
+
+$(FONTS_TAR):
+	mkdir -p .deps/fonts
+	curl -fsSL -o $@.part https://github.com/ryanoasis/nerd-fonts/releases/download/$(FONTS_VERSION)/IosevkaTerm.tar.xz
+	echo "$(FONTS_SHA256)  $@.part" | shasum -a 256 -c -
+	mv $@.part $@
+
+$(FONTS_DIR)/IosevkaTermNerdFontMono-Regular.ttf: $(FONTS_TAR)
+	mkdir -p $(FONTS_DIR)
+	tar -xJf $(FONTS_TAR) -C $(FONTS_DIR) LICENSE.md $(foreach f,$(FONT_FACES),IosevkaTermNerdFontMono-$(f).ttf)
+	touch $@

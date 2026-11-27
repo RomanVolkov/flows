@@ -8,7 +8,7 @@ import (
 func TestGhosttyConfigAndContrast(t *testing.T) {
 	cfg := GhosttyConfig()
 	for _, want := range []string{
-		"font-family = Iosevka Mono",
+		"font-family = IosevkaTerm Nerd Font Mono",
 		"font-size = 19",
 		"window-padding-x = 5",
 		"cursor-style = block",

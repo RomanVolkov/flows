@@ -130,8 +130,9 @@ func decodeWinsize(payload []byte) (pty.Winsize, error) {
 
 func (h *Host) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sessionID, ok := parseAttachPath(r.URL.Path)
-		if !ok || sessionID != h.cfg.SessionID {
+		prefix := "/v1/sessions/" + h.cfg.SessionID
+		preview := r.URL.Path == prefix+"/preview"
+		if !preview && r.URL.Path != prefix+"/attach" {
 			http.NotFound(w, r)
 			return
 		}
@@ -140,23 +141,11 @@ func (h *Host) handler() http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		h.serveAttach(w, r)
+		h.serveAttach(w, r, preview)
 	})
 }
 
-func parseAttachPath(path string) (string, bool) {
-	trimmed := strings.TrimPrefix(path, "/v1/sessions/")
-	if trimmed == path {
-		return "", false
-	}
-	sessionID, ok := strings.CutSuffix(trimmed, "/attach")
-	if !ok || sessionID == "" || strings.Contains(sessionID, "/") {
-		return "", false
-	}
-	return sessionID, true
-}
-
-func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
+func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request, preview bool) {
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		return
@@ -166,7 +155,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
-	if clientID == "" {
+	if preview || clientID == "" {
 		var err error
 		clientID, err = randomHex(8)
 		if err != nil {
@@ -214,7 +203,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	ownerChanged := false
-	if !finished && h.ownerID == "" {
+	if !finished && !preview && h.ownerID == "" {
 		h.ownerEpoch++
 		h.ownerID = clientID
 		ownerChanged = true
@@ -297,7 +286,7 @@ func (h *Host) serveAttach(w http.ResponseWriter, r *http.Request) {
 				readErr <- err
 				return
 			}
-			if msgType != websocket.MessageBinary {
+			if preview || msgType != websocket.MessageBinary {
 				continue
 			}
 			frame, err := decodeFrame(data)
@@ -420,6 +409,7 @@ func writeWSFrame(ctx context.Context, conn *websocket.Conn, f Frame) error {
 
 // AttachOptions configures a WebSocket attach client.
 type AttachOptions struct {
+	Preview  bool
 	ClientID string
 	Epoch    uint64
 	Nonce    string
@@ -451,6 +441,9 @@ func DialAttach(ctx context.Context, socketPath, sessionID string, opts AttachOp
 		q.Set("nonce", opts.Nonce)
 	}
 	rawURL := "ws://flows.local/v1/sessions/" + url.PathEscape(sessionID) + "/attach"
+	if opts.Preview {
+		rawURL = strings.TrimSuffix(rawURL, "/attach") + "/preview"
+	}
 	if encoded := q.Encode(); encoded != "" {
 		rawURL += "?" + encoded
 	}

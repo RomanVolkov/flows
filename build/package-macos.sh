@@ -33,6 +33,7 @@ for name in flows-host; do
     -o "${CONTENTS}/MacOS/${name}" "./cmd/${name}"
 done
 make desktop
+cp desktop/app/frontend/src/assets/fonts/iosevka-term/LICENSE.md "${CONTENTS}/Resources/licenses/IosevkaTermNerdFontMono.md"
 cp build/bin/Flows-desktop "${CONTENTS}/MacOS/Flows"
 
 # Prebuild shipped plugins so the packaged app runs without a compiler.
