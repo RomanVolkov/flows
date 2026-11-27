@@ -3,6 +3,7 @@ id: github
 version: 1.0.0
 owner: flows
 description: GitHub PR, review, CI, and merge operations via gh
+required_clis: [gh]
 credentials:
   - id: github-cli
     provider: github

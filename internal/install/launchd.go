@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // LaunchdConfig configures per-user launchd daemon registration.
@@ -22,6 +23,7 @@ type LaunchdConfig struct {
 	LogDir     string
 	ConfigHome string
 	SearchPath string
+	Restart    bool // restart a loaded job even when its plist is unchanged
 }
 
 // DefaultLabel returns dev.flows.daemon for the standard home or an isolated
@@ -110,13 +112,35 @@ func RegisterLaunchd(ctx context.Context, runner LaunchdRunner, plistPath string
 		return fmt.Errorf("write launchd plist: %w", err)
 	}
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	// Detect if already loaded/running before bootstrapping.
-	if _, err := runner.Run(ctx, "print", domain+"/"+cfg.Label); err == nil {
+	target := domain + "/" + cfg.Label
+	if _, err := runner.Run(ctx, "print", target); err == nil {
 		if string(previous) == content {
+			if cfg.Restart {
+				if out, err := runner.Run(ctx, "kickstart", "-k", target); err != nil {
+					return fmt.Errorf("restart daemon: %w (%s)", err, out)
+				}
+			}
 			return nil
 		}
-		if out, err := runner.Run(ctx, "bootout", domain+"/"+cfg.Label); err != nil {
+		if out, err := runner.Run(ctx, "bootout", target); err != nil {
 			return fmt.Errorf("reload daemon: %w (%s)", err, out)
+		}
+		wait, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		ticker := time.NewTicker(50 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if _, err := runner.Run(wait, "print", target); err != nil {
+				if wait.Err() != nil {
+					return fmt.Errorf("wait for daemon to unload: %w", wait.Err())
+				}
+				break
+			}
+			select {
+			case <-wait.Done():
+				return fmt.Errorf("wait for daemon to unload: %w", wait.Err())
+			case <-ticker.C:
+			}
 		}
 	}
 	if out, err := runner.Run(ctx, "bootstrap", domain, plistPath); err != nil {

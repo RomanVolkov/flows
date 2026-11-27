@@ -90,6 +90,7 @@ func VerifyProcess(expected ProcessIdentity) error {
 
 // Record is the durable on-disk state of a PTY session host.
 type Record struct {
+	Harness    string          `json:"harness,omitempty"`
 	HostID     string          `json:"host_id"`
 	SessionID  string          `json:"session_id"`
 	AttemptID  string          `json:"attempt_id"`
@@ -124,6 +125,7 @@ type ExitReceipt struct {
 
 // Config configures a PTY session host.
 type Config struct {
+	Harness       string
 	SessionID     string
 	AttemptID     string
 	StateDir      string
@@ -280,6 +282,7 @@ func Start(ctx context.Context, cfg Config) (*Host, error) {
 			HostID:     hostID,
 			SessionID:  cfg.SessionID,
 			AttemptID:  cfg.AttemptID,
+			Harness:    cfg.Harness,
 			SocketPath: cfg.SocketPath,
 			StartNonce: nonce,
 			Host:       hostProc,

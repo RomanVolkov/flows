@@ -43,10 +43,10 @@ func TestGitHubPaginationMissingAccessChangedHeadDuplicatePRAndModes(t *testing.
 	ghScript := `
 if [ "$1" = "api" ]; then
   case "$2" in
-    *"&page=1"*)
+    repos/flows/core/pulls\?*"&page=1"*)
       echo '[{"id":101,"number":1,"title":"PR 1","state":"open","html_url":"https://gh/1","head":{"ref":"feat/a","sha":"sha-1"},"base":{"ref":"main"},"has_next":true}]'
       exit 0 ;;
-    *"&page=2"*)
+    repos/flows/core/pulls\?*"&page=2"*)
       echo '[{"id":102,"number":2,"title":"PR 2","state":"open","html_url":"https://gh/2","head":{"ref":"feat/b","sha":"sha-2"},"base":{"ref":"main"}}]'
       exit 0 ;;
     *"pulls/1"*)
@@ -72,7 +72,7 @@ exit 0
 	}
 	res2, err := plugin.Invoke(ctx, plugin.InvokeConfig{
 		Binary: bin, Operation: "github.list-pull-requests", AttemptID: "att-node", RequestID: "node",
-		Input: map[string]string{"repository": "flows/core", "state": "open"},
+		Input: map[string]string{"repository": "git@github.com:flows/core.git", "state": "open"},
 	})
 	if err != nil {
 		t.Fatalf("node list-pull-requests: %v", err)

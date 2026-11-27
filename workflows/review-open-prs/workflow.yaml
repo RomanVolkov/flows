@@ -1,10 +1,14 @@
 schema: flows/v1
 id: review-open-prs
 version: 1.0.0
+description: Find open GitHub pull requests or GitLab merge requests and have coding agents review them.
 inputs:
   repository:
     type: string
     required: true
+    control: text
+    placeholder: owner/repo
+    description: Use owner/repo or a GitHub clone URL. For GitLab, use the full namespace/project path.
   use_github:
     type: boolean
     default: true

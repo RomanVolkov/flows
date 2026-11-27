@@ -176,7 +176,7 @@ func (r *workflowRunner) executeHarness(ctx context.Context, spec store.NewWorkf
 	if err != nil {
 		return nil, err
 	}
-	h, err := r.runs.startWorkflowHost(ctx, attempt.ID, launch)
+	h, err := r.runs.startWorkflowHost(ctx, attempt.ID, adapter.Kind(), launch)
 	if err != nil {
 		return nil, err
 	}
@@ -218,12 +218,16 @@ func (r *workflowRunner) executeHarness(ctx context.Context, spec store.NewWorkf
 
 // The workflow runner owns completion of these hosts because their output must
 // commit with the step outcome before a downstream node can start.
-func (m *RunManager) startWorkflowHost(ctx context.Context, attemptID string, launch harness.ResolvedLaunch) (*host.Host, error) {
+func (m *RunManager) startWorkflowHost(ctx context.Context, attemptID string, kind harness.Kind, launch harness.ResolvedLaunch) (*host.Host, error) {
 	id := "sess-" + shortHex(8)
+	args, env := launch.Argv[1:], launch.Env
+	if kind == harness.KindAgy {
+		args, env = m.agyUsageLaunch(attemptID, args, env)
+	}
 	h, err := host.Start(ctx, host.Config{
-		SessionID: id, AttemptID: attemptID, StateDir: filepath.Join(m.home.State, "hosts", id),
+		SessionID: id, Harness: string(kind), AttemptID: attemptID, StateDir: filepath.Join(m.home.State, "hosts", id),
 		SocketPath: filepath.Join(m.home.Runtime, "h-"+id+".sock"), WorkDir: launch.WorkDir,
-		Command: launch.Argv[0], Args: launch.Argv[1:], Env: launch.Env, InitialPrompt: launch.PTYPrompt,
+		Command: launch.Argv[0], Args: args, Env: env, InitialPrompt: launch.PTYPrompt,
 		InitialScreen: []byte(theme.TerminalOSC()),
 	})
 	if err != nil {

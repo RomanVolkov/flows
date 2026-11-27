@@ -20,7 +20,8 @@ type workflowLaunchRequest struct {
 
 type workflowSummary struct {
 	library.IndexEntry
-	Form workflow.WorkflowForm `json:"form"`
+	Description string                `json:"description,omitempty"`
+	Form        workflow.WorkflowForm `json:"form"`
 }
 
 func (r *workflowRunner) serveHTTP(w http.ResponseWriter, req *http.Request) {
@@ -41,7 +42,10 @@ func (r *workflowRunner) serveHTTP(w http.ResponseWriter, req *http.Request) {
 				continue
 			}
 			if snapshot := prepared[entry.ID]; snapshot != nil {
-				workflows = append(workflows, workflowSummary{entry, workflow.NewWorkflowForm(snapshot.Compiled.Definition, "")})
+				def := snapshot.Compiled.Definition
+				workflows = append(workflows, workflowSummary{
+					IndexEntry: entry, Description: def.Description, Form: workflow.NewWorkflowForm(def, ""),
+				})
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"workflows": workflows, "preparing": preparing})

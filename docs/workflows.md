@@ -8,6 +8,7 @@ Workflows use `schema: flows/v1` (`schema/workflow-v1.json`) and are loaded dyna
 schema: flows/v1
 id: hello-flow
 version: 1.0.0
+description: Print a check message for a repository.
 inputs:
   repo:
     type: string
@@ -22,10 +23,13 @@ outputs:
   done: ${{ nodes.check.outputs.exit_code }}
 ```
 
-Validate any workflow with `flows validate <path/to/workflow.yaml>`.
+Add an optional top-level `description` to explain what the workflow does. Flows shows it below the workflow picker in **New → Run a workflow**.
+
+Validate a workflow or tool package with `flows validate <package-directory>`. Add `--check-dependencies` to check installed tools and commands, configured provider credentials, and harness availability. The check covers declared dependencies across the workflow and its subflows, including optional branches. Values that require launch inputs are reported as deferred. Use a read-only check with the actual repository or resource to verify access.
 
 ## Built-in Workflows
 
+- `workflows/validate-package` checks a directory containing `workflow.yaml` or `tool.yaml` for package validation errors.
 - `workflows/review-open-prs`: Scheduled PR/MR discovery and per-item harness review with repository/head deduplication and schedule overlap protection.
 - `workflows/deliver-change`: Five-stage intake → group planning (`flows/plan-group.yaml`) → plan reconciliation → implementation (`flows/implement-group.yaml`) → review/merge watch (`flows/watch-change.yaml`). All steps, prompts, and provider bindings can be edited in YAML without recompiling `flowsd`.
 

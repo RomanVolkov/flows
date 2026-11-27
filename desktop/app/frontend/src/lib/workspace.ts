@@ -26,7 +26,7 @@ export interface WorkflowField {
   control?:'toggle'|'segmented'|'select'|'folder'|'array'|'repos'|'number'|'multiline'|'text'
 }
 export interface WorkflowSummary {
-  id:string; version:string; digest:string; path:string; origin:string
+  id:string; version:string; digest:string; path:string; origin:string; description?:string
   form:{fields:WorkflowField[]}
 }
 export interface RunWorkflowRequest {

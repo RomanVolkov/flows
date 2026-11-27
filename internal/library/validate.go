@@ -1,6 +1,7 @@
 package library
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,16 @@ type ValidationReport struct {
 
 // Validate checks whether a workflow or tool package can be registered by Flows.
 func Validate(home paths.Home, dir string) ValidationReport {
+	return validate(context.Background(), home, dir, false)
+}
+
+// ValidateWithDependencies also checks local runtime prerequisites. It works
+// without importing the package or executing any workflow nodes.
+func ValidateWithDependencies(ctx context.Context, home paths.Home, dir string) ValidationReport {
+	return validate(ctx, home, dir, true)
+}
+
+func validate(ctx context.Context, home paths.Home, dir string, checkDependencies bool) ValidationReport {
 	absDir, err := filepath.Abs(dir)
 	report := ValidationReport{Directory: dir, Diagnostics: []workflow.Diagnostic{}}
 	if err != nil {
@@ -42,22 +53,38 @@ func Validate(home paths.Home, dir string) ValidationReport {
 		report.ID = def.ID
 		reg := catalog.NewRegistry()
 		_ = reg.RegisterBuiltins()
+		installed := make(map[string]string)
 		if snap, scanErr := Scan(home, nil); scanErr == nil {
-			_ = PublishTools(snap, reg, map[string]bool{})
+			_ = PublishTools(snap, reg, nil)
+			for _, entry := range snap.Entries {
+				if entry.Kind == KindWorkflow {
+					installed[entry.ID] = filepath.Join(entry.Path, "workflow.yaml")
+				}
+			}
 		}
 		loader := func(parent *workflow.Definition, ref string) (*workflow.Definition, error) {
-			target := filepath.Join(filepath.Dir(parent.File), ref)
-			if filepath.Ext(target) == "" {
-				target = filepath.Join(target, "workflow.yaml")
+			target, ok := installed[ref]
+			if !ok {
+				if !filepath.IsLocal(ref) {
+					return nil, fmt.Errorf("invalid workflow reference %q", ref)
+				}
+				target = filepath.Join(filepath.Dir(parent.File), ref)
+				if filepath.Ext(target) == "" {
+					target = filepath.Join(target, "workflow.yaml")
+				}
 			}
 			sub, diags := workflow.ParseFile(target)
 			if len(diags) > 0 {
-				return nil, fmt.Errorf("%s", diags[0].Message)
+				return nil, diags[0]
 			}
 			return sub, nil
 		}
 		_, report.Diagnostics = workflow.CompileWithLoader(def, reg, loader)
 		report.Valid = len(report.Diagnostics) == 0
+		if report.Valid && checkDependencies {
+			checker := newDependencyValidator(ctx, home, &report)
+			checker.workflow(def, reg, loader)
+		}
 		return report
 	}
 	if _, err := os.Stat(toolPath); err == nil {
@@ -72,6 +99,10 @@ func Validate(home paths.Home, dir string) ValidationReport {
 			return invalid(report, "invalid_tool", err.Error())
 		}
 		report.Valid = true
+		if checkDependencies {
+			checker := newDependencyValidator(ctx, home, &report)
+			checker.tool(absDir, pkg.PackageID, false)
+		}
 		return report
 	}
 	return invalid(report, "manifest_not_found", "package directory must contain workflow.yaml or tool.yaml")

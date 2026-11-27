@@ -23,6 +23,10 @@ func main() {
 
 func run() int {
 	args := os.Args[1:]
+	if len(args) == 2 && args[0] == "usage" && args[1] == "agy-link" {
+		recordAgyUsageLink()
+		return 0
+	}
 	if len(args) == 3 && args[0] == "bridge" && args[1] == "result" {
 		return runWorkflowResult(args[2])
 	}
@@ -50,7 +54,7 @@ func run() int {
 			}
 			return 0
 		case "--help", "-h":
-			fmt.Fprintln(os.Stdout, "Usage: flows {version|status|shutdown|validate DIRECTORY [--json]|catalog list|describe ID|spec show TOPIC}")
+			fmt.Fprintln(os.Stdout, "Usage: flows {version|status|shutdown|validate DIRECTORY [--json] [--check-dependencies]|catalog list|describe ID|spec show TOPIC}")
 			return 0
 		}
 	}
@@ -147,16 +151,18 @@ func runCatalog(args []string) int {
 
 func runValidate(args []string) int {
 	dir := ""
-	jsonOut := false
+	jsonOut, checkDependencies := false, false
 	for _, a := range args {
 		if a == "--json" {
 			jsonOut = true
+		} else if a == "--check-dependencies" {
+			checkDependencies = true
 		} else if dir == "" {
 			dir = a
 		}
 	}
 	if dir == "" {
-		fmt.Fprintln(os.Stderr, "Usage: flows validate DIRECTORY [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: flows validate DIRECTORY [--json] [--check-dependencies]")
 		return 2
 	}
 	home, err := paths.Resolve()
@@ -164,7 +170,14 @@ func runValidate(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
-	rep := library.Validate(home, dir)
+	var rep library.ValidationReport
+	if checkDependencies {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		rep = library.ValidateWithDependencies(ctx, home, dir)
+	} else {
+		rep = library.Validate(home, dir)
+	}
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -172,9 +185,10 @@ func runValidate(args []string) int {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
 		}
-	} else if rep.Valid {
-		fmt.Fprintf(os.Stdout, "valid %s: %s\n", rep.Kind, rep.ID)
 	} else {
+		if rep.Valid {
+			fmt.Fprintf(os.Stdout, "valid %s: %s\n", rep.Kind, rep.ID)
+		}
 		for _, d := range rep.Diagnostics {
 			fmt.Fprintln(os.Stderr, d.Error())
 		}

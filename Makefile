@@ -51,8 +51,7 @@ install:
 	@ln -sf "$${HOME}/Applications/Flows.app/Contents/Resources/bin/flows" "$${HOME}/.local/bin/flows"
 	@$(MAKE) install-spec
 	@env -u FLOWS_HOME "$${HOME}/.local/bin/flows" install-bundled
-	@if launchctl print "gui/$$(id -u)/dev.flows.daemon" >/dev/null 2>&1; then launchctl bootout "gui/$$(id -u)/dev.flows.daemon"; fi
-	@env -u FLOWS_HOME "$${HOME}/Applications/Flows.app/Contents/MacOS/flowsd" register
+	@env -u FLOWS_HOME "$${HOME}/Applications/Flows.app/Contents/MacOS/flowsd" register --restart
 	@env -u FLOWS_HOME "$${HOME}/.local/bin/flows" status
 
 uninstall:

@@ -97,7 +97,7 @@ func listMRs(ctx context.Context, project, state string) ([]MergeRequest, error)
 		state = "opened"
 	}
 	encoded := url.PathEscape(project)
-	var all []MergeRequest
+	all := make([]MergeRequest, 0)
 	for page := 1; ; page++ {
 		out, err := runGLab(ctx, "api", fmt.Sprintf("projects/%s/merge_requests?state=%s&per_page=100&page=%d", encoded, url.QueryEscape(state), page))
 		if err != nil {
@@ -209,10 +209,10 @@ func main() {
 		},
 		"gitlab.merge-mr": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
 			var in struct {
-				Project                    string `json:"project"`
-				IID                        int    `json:"iid"`
-				ExpectedHeadSHA            string `json:"expected_head_sha"`
-				MergeWhenPipelineSucceeds  bool   `json:"merge_when_pipeline_succeeds"`
+				Project                   string `json:"project"`
+				IID                       int    `json:"iid"`
+				ExpectedHeadSHA           string `json:"expected_head_sha"`
+				MergeWhenPipelineSucceeds bool   `json:"merge_when_pipeline_succeeds"`
 			}
 			_ = json.Unmarshal(ic.Input, &in)
 			encoded := url.PathEscape(in.Project)

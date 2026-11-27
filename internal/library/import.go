@@ -90,6 +90,12 @@ type ActiveAlias struct {
 }
 
 type toolManifestYAML struct {
+	RequiredCLIs []string `yaml:"required_clis"`
+	Credentials  []struct {
+		ID       string `yaml:"id"`
+		Provider string `yaml:"provider"`
+		Required bool   `yaml:"required"`
+	} `yaml:"credentials"`
 	Schema      string `yaml:"schema"`
 	ID          string `yaml:"id"`
 	Version     string `yaml:"version"`

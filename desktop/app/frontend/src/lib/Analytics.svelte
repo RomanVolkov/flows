@@ -110,7 +110,7 @@
     {:else if !data}
       <p class="muted mono">…</p>
     {:else if lines.length === 0}
-      <p class="muted mono">no claude or codex tokens in this period</p>
+      <p class="muted mono">No recorded token usage in this period</p>
     {:else}
       <div class="summary mono"><b>{tokens(sum)}</b> tokens · {requests} requests
         {#if Object.keys(harnesses).length}<span class="harnesses">{#each Object.entries(harnesses).sort((a, b) => b[1] - a[1]) as [name, amount]}<span>{name} {tokens(amount)}</span>{/each}</span>{/if}

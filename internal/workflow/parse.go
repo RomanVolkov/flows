@@ -100,17 +100,18 @@ type NodeSpec struct {
 
 // Definition is the parsed workflow definition with preserved syntax tree and AST locations.
 type Definition struct {
-	File       string               `json:"file"`
-	Schema     string               `json:"schema"`
-	ID         string               `json:"id"`
-	Version    string               `json:"version"`
-	Inputs     map[string]InputSpec `json:"inputs,omitempty"`
-	Milestones []string             `json:"milestones,omitempty"`
-	Nodes      map[string]NodeSpec  `json:"nodes"`
-	NodeOrder  []string             `json:"node_order"`
-	Outputs    map[string]string    `json:"outputs,omitempty"`
-	SyntaxTree *yaml.Node           `json:"-"`
-	Locations  map[string]Location  `json:"-"`
+	Description string               `json:"description,omitempty"`
+	File        string               `json:"file"`
+	Schema      string               `json:"schema"`
+	ID          string               `json:"id"`
+	Version     string               `json:"version"`
+	Inputs      map[string]InputSpec `json:"inputs,omitempty"`
+	Milestones  []string             `json:"milestones,omitempty"`
+	Nodes       map[string]NodeSpec  `json:"nodes"`
+	NodeOrder   []string             `json:"node_order"`
+	Outputs     map[string]string    `json:"outputs,omitempty"`
+	SyntaxTree  *yaml.Node           `json:"-"`
+	Locations   map[string]Location  `json:"-"`
 }
 
 // ParseFile reads and parses a workflow YAML file.
@@ -165,13 +166,14 @@ func ParseBytes(file string, data []byte) (*Definition, []Diagnostic) {
 	collectLocations(file, "", doc.Content[0], locs)
 
 	type rawDef struct {
-		Schema     string               `yaml:"schema"`
-		ID         string               `yaml:"id"`
-		Version    string               `yaml:"version"`
-		Inputs     map[string]InputSpec `yaml:"inputs"`
-		Milestones []string             `yaml:"milestones"`
-		Nodes      yaml.Node            `yaml:"nodes"`
-		Outputs    map[string]string    `yaml:"outputs"`
+		Description string               `yaml:"description"`
+		Schema      string               `yaml:"schema"`
+		ID          string               `yaml:"id"`
+		Version     string               `yaml:"version"`
+		Inputs      map[string]InputSpec `yaml:"inputs"`
+		Milestones  []string             `yaml:"milestones"`
+		Nodes       yaml.Node            `yaml:"nodes"`
+		Outputs     map[string]string    `yaml:"outputs"`
 	}
 	var raw rawDef
 	if err := doc.Content[0].Decode(&raw); err != nil {
@@ -186,16 +188,17 @@ func ParseBytes(file string, data []byte) (*Definition, []Diagnostic) {
 	}
 
 	def := &Definition{
-		File:       file,
-		Schema:     raw.Schema,
-		ID:         raw.ID,
-		Version:    raw.Version,
-		Inputs:     raw.Inputs,
-		Milestones: raw.Milestones,
-		Nodes:      make(map[string]NodeSpec),
-		Outputs:    raw.Outputs,
-		SyntaxTree: &doc,
-		Locations:  locs,
+		File:        file,
+		Schema:      raw.Schema,
+		ID:          raw.ID,
+		Version:     raw.Version,
+		Description: strings.TrimSpace(raw.Description),
+		Inputs:      raw.Inputs,
+		Milestones:  raw.Milestones,
+		Nodes:       make(map[string]NodeSpec),
+		Outputs:     raw.Outputs,
+		SyntaxTree:  &doc,
+		Locations:   locs,
 	}
 
 	var diags []Diagnostic

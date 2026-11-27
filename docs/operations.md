@@ -11,7 +11,7 @@
 
 ## Usage Attribution & Coverage
 
-Usage collectors ingest session token/cost records from `claude`, `codex`, and `agy` into SQLite (`002_usage.sql`), attributing totals per run, step, and harness.
+Usage collectors ingest token records from Claude, Codex, and Antigravity CLI (`agy`) into SQLite. The Analytics view includes local transcript totals. Flows links new `agy` sessions and workflow steps to their transcripts through the CLI's status line callback. Older `agy` conversations can appear in totals without a Flows run association.
 
 ## Upgrade, Rollback & Uninstall
 

@@ -263,14 +263,21 @@ func (m *RunManager) EnsureHostStarted(ctx context.Context, intent LaunchIntent)
 		}, nil
 	}
 
+	args := intent.Args
+	var env []string
+	if intent.Harness == harness.KindAgy {
+		args, env = m.agyUsageLaunch(intent.AttemptID, args, env)
+	}
 	h, err := host.Start(context.Background(), host.Config{
 		SessionID:     intent.SessionID,
+		Harness:       string(intent.Harness),
 		AttemptID:     intent.AttemptID,
 		StateDir:      hostStateDir,
 		SocketPath:    intent.SocketPath,
 		WorkDir:       intent.WorkDir,
 		Command:       intent.Command,
-		Args:          intent.Args,
+		Args:          args,
+		Env:           env,
 		InitialPrompt: intent.Prompt,
 		InitialScreen: []byte(theme.TerminalOSC()),
 	})

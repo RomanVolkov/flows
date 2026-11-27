@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	sdk "github.com/romanvolkov/flows/sdk/go"
@@ -51,21 +52,54 @@ func runGH(ctx context.Context, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-func validateRepo(repo string) error {
-	if strings.Count(repo, "/") != 1 || strings.ContainsAny(repo, "?#&\\ ") || strings.Contains(repo, "..") {
-		return fmt.Errorf("invalid github repository %q", repo)
+var repoName = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+
+func normalizeRepo(repo string) (string, error) {
+	value := strings.TrimSpace(repo)
+	if path, ok := strings.CutPrefix(value, "git@github.com:"); ok {
+		value = strings.TrimSuffix(path, ".git")
+	} else if strings.Contains(value, "://") {
+		remote, err := url.Parse(value)
+		if err != nil || !strings.EqualFold(remote.Hostname(), "github.com") ||
+			(remote.Scheme != "https" && remote.Scheme != "ssh") || remote.RawQuery != "" || remote.Fragment != "" {
+			return "", fmt.Errorf("expected a GitHub repository as owner/repo or a GitHub HTTPS or SSH remote")
+		}
+		value = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(remote.Path, "/"), "/"), ".git")
 	}
-	return nil
+	if !repoName.MatchString(value) || strings.Contains(value, "..") || strings.HasPrefix(value, "-") ||
+		strings.HasSuffix(value, "/.") || strings.HasPrefix(value, "./") {
+		return "", fmt.Errorf("expected a GitHub repository as owner/repo or a GitHub HTTPS or SSH remote")
+	}
+	return value, nil
+}
+
+func withNormalizedRepo(next sdk.Handler) sdk.Handler {
+	return func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
+		var input map[string]json.RawMessage
+		if err := json.Unmarshal(ic.Input, &input); err != nil {
+			return nil, err
+		}
+		var remote string
+		if raw, ok := input["repository"]; ok {
+			if err := json.Unmarshal(raw, &remote); err != nil {
+				return nil, err
+			}
+		}
+		repo, err := normalizeRepo(remote)
+		if err != nil {
+			return nil, err
+		}
+		input["repository"], _ = json.Marshal(repo)
+		ic.Input, _ = json.Marshal(input)
+		return next(ctx, ic)
+	}
 }
 
 func listPRs(ctx context.Context, repo, state string) ([]PullRequest, error) {
-	if err := validateRepo(repo); err != nil {
-		return nil, err
-	}
 	if state == "" {
 		state = "open"
 	}
-	var all []PullRequest
+	all := make([]PullRequest, 0)
 	for page := 1; ; page++ {
 		out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls?state=%s&per_page=100&page=%d", repo, url.QueryEscape(state), page))
 		if err != nil {
@@ -125,7 +159,7 @@ func main() {
 		},
 	}
 
-	err := sdk.Serve(m, map[string]sdk.Handler{
+	handlers := map[string]sdk.Handler{
 		"github.list-pull-requests": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
 			var in struct{ Repository, State string }
 			if len(ic.Input) > 0 {
@@ -145,9 +179,6 @@ func main() {
 				Number     int    `json:"number"`
 			}
 			if err := json.Unmarshal(ic.Input, &in); err != nil {
-				return nil, err
-			}
-			if err := validateRepo(in.Repository); err != nil {
 				return nil, err
 			}
 			out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls/%d", in.Repository, in.Number))
@@ -228,8 +259,11 @@ func main() {
 			out, err := runGH(ctx, "pr", "merge", fmt.Sprintf("%d", in.Number), "--repo", in.Repository, "--match-head-commit", in.ExpectedHeadSHA)
 			return map[string]any{"merged": true, "receipt": strings.TrimSpace(string(out))}, err
 		},
-	})
-	if err != nil {
+	}
+	for operation, handler := range handlers {
+		handlers[operation] = withNormalizedRepo(handler)
+	}
+	if err := sdk.Serve(m, handlers); err != nil {
 		os.Exit(1)
 	}
 }

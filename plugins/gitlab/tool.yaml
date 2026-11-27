@@ -3,6 +3,7 @@ id: gitlab
 version: 1.0.0
 owner: flows
 description: GitLab MR, pipeline, approval, discussion, and merge operations via glab
+required_clis: [glab]
 credentials:
   - id: gitlab-cli
     provider: gitlab

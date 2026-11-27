@@ -5,25 +5,41 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 type fakeLaunchdRunner struct {
-	calls    [][]string
-	printed  bool
-	failBoot bool
+	calls        [][]string
+	printed      bool
+	failBoot     bool
+	unloading    bool
+	unloadProbes int
 }
 
 func (f *fakeLaunchdRunner) Run(_ context.Context, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
 	if len(args) > 0 && args[0] == "print" {
+		if f.unloading {
+			if f.unloadProbes > 0 {
+				f.unloadProbes--
+				return "unloading", nil
+			}
+			f.printed, f.unloading = false, false
+		}
 		if f.printed {
 			return "running", nil
 		}
 		return "", errors.New("not loaded")
 	}
+	if len(args) > 0 && args[0] == "bootout" {
+		f.unloading = true
+	}
 	if len(args) > 0 && args[0] == "bootstrap" {
+		if f.unloading {
+			return "", errors.New("old job is still registered")
+		}
 		if f.failBoot {
 			return "permission denied", errors.New("exit 1")
 		}
@@ -139,5 +155,35 @@ func TestInstallTwiceSpacesAndUserEditedWorkflow(t *testing.T) {
 		Runner:       runner,
 	}); err == nil || !strings.Contains(err.Error(), "step check cli link") {
 		t.Fatalf("expected cli link conflict error, got %v", err)
+	}
+}
+
+func TestRegisterLaunchdRestartsWithoutUnloadingUnchangedJob(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dev.flows.test.plist")
+	cfg := LaunchdConfig{Label: "dev.flows.test", DaemonBin: "/path/flowsd", LogDir: dir}
+	runner := &fakeLaunchdRunner{}
+	if err := RegisterLaunchd(t.Context(), runner, path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	target := runner.calls[0][1]
+	runner.calls = nil
+	cfg.Restart = true
+	if err := RegisterLaunchd(t.Context(), runner, path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if want := [][]string{{"print", target}, {"kickstart", "-k", target}}; !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("restart calls = %v, want %v", runner.calls, want)
+	}
+	runner.calls = nil
+	runner.unloadProbes = 1
+	cfg.DaemonBin = "/new/path/flowsd"
+	if err := RegisterLaunchd(t.Context(), runner, path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"print", target}, {"bootout", target}, {"print", target}, {"print", target},
+		{"bootstrap", filepath.Dir(target), path}}
+	if !reflect.DeepEqual(runner.calls, want) {
+		t.Fatalf("reload calls = %v, want %v", runner.calls, want)
 	}
 }

@@ -1,6 +1,7 @@
 schema: flows/v1
 id: validate-package
 version: 1.0.0
+description: Check a workflow or tool package for configuration errors and missing dependencies.
 inputs:
   directory:
     type: string
@@ -10,6 +11,6 @@ nodes:
     uses: core.command
     with:
       command: flows
-      args: [validate, "${{ inputs.directory }}", --json]
+      args: [validate, "${{ inputs.directory }}", --check-dependencies]
 outputs:
   exit_code: ${{ nodes.validate.outputs.exit_code }}

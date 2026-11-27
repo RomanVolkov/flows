@@ -369,6 +369,11 @@ func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.Workf
 		}
 		result, err := builtin.RunCommand(ctx, builtin.CommandSpec{Executable: command, Args: args, WorkDir: dir, Timeout: timeout})
 		out := map[string]any{"exit_code": result.ExitCode, "stdout": result.Stdout, "stderr": result.Stderr}
+		if err != nil && with["command"] == "flows" && len(args) > 0 && args[0] == "validate" {
+			if detail := strings.TrimSpace(result.Stderr); detail != "" {
+				err = fmt.Errorf("%w: %s", err, detail)
+			}
+		}
 		return out, err
 	}
 	result, err := r.invokePinnedPlugin(ctx, run, step, node, attempt, snapshot, with, "")

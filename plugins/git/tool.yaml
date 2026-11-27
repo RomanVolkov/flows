@@ -3,6 +3,7 @@ id: git
 version: 1.0.0
 owner: flows
 description: Isolated Git workspace operations
+required_clis: [git]
 operations:
   - id: git.checkout
     description: Prepare an isolated git worktree

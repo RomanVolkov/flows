@@ -1,4 +1,4 @@
-// The tokens a claude or codex session used (the daemon reads the agent's transcripts).
+// The tokens a coding harness session used (the daemon reads the agent's transcripts).
 export interface Usage {
   model?: string
   input: number // not read from the cache
@@ -12,7 +12,7 @@ export interface Usage {
   transcripts: number // 0: the agent has written none yet
 }
 
-export const counted = (agent: string) => agent === 'claude' || agent === 'codex'
+export const counted = (agent: string) => agent === 'claude' || agent === 'codex' || agent === 'agy'
 
 export const total = (u: Usage) => u.input + u.output + u.cache_read + u.cache_write
 

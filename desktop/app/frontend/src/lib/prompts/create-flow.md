@@ -18,12 +18,20 @@ Use read-only catalog lookups during the interview when they can settle a questi
 - For example, tools can list open PRs/MRs, fetch head and pipeline status, and observe unresolved comments. A new eligible comment on the current head can trigger a fix agent once per review item and revision. The review agent inspects the diff and returns findings with evidence. The fix agent receives the selected findings, edits the checkout and runs checks. Tools can then recheck the head and pipeline. Ask which of these steps belongs in this user's flow.
 - For a standalone tool, interview around one callable operation. Establish its caller, input/output contract, side effects, failure cases, and one representative invocation.
 
-When the design is clear, show the goal and a compact table with one row per node: trigger/dependencies, tool operation or agent, inputs → outputs, and completion or retry rule. For a tool, show its operation contract instead. Ask whether to revise a decision or implement. Wait for explicit approval before writing files.
+## Review the design before implementation
+
+When the interview is complete, show the workflow goal and a table with one row per node. Include the trigger and dependencies, who runs the node, inputs and outputs, and the completion or retry rule. Group the work explicitly:
+
+1. **Existing tools to reuse.** List each catalog operation ID, the node that calls it, and required CLIs, credentials, and provider access.
+2. **Tools to implement.** List each missing operation, its inputs and outputs, side effects, retry behavior, prerequisites, and a read-only or local check.
+3. **Harness steps.** List each agent task, which of Claude, Codex, or agy can run it, the prompt and evidence it receives, and the structured result the workflow expects.
+
+Show checked, missing, and deferred prerequisites. Call out any input needed to check access, such as a target repository. For standalone tools, show the operation contract and dependency checks. Ask the user whether to revise the design or implement it. Wait for explicit approval before writing implementation files.
 
 ## Implement and validate
 
 Read `flows spec show authoring` and the relevant workflow or tool schema and examples under `flows spec path`. Create each agreed package in its own directory. For every agent node, write a dedicated prompt template with its task, bound inputs, scope, evidence requirements, checks, and structured output fields consumed downstream.
 
-After writing or changing the package, **run** `flows validate "<package-directory>" --json` on the actual directory containing workflow.yaml or tool.yaml. If the CLI is outside PATH, try the installed ~/.local/bin/flows. Validate each new tool and the final workflow. Read the exit status and diagnostics, repair errors, and rerun until the command exits zero and the report has valid=true. If a dependency must first be registered, explain which one and ask before importing it. If validation is blocked, report the blocker.
+After writing or changing the package, **run** `flows validate "<package-directory>" --json` on the actual directory containing workflow.yaml or tool.yaml. If the CLI is outside PATH, try the installed ~/.local/bin/flows. Then run `flows validate "<package-directory>" --json --check-dependencies` for each new tool and for the final workflow. Declare external commands in each tool manifest's `required_clis` and required credential references in `credentials`. For a dependency that needs actual inputs to verify, agree on representative inputs and use only read-only checks, such as looking up the selected repository. Build new plugin sources with the declared toolchain and exercise the agreed contract against a local fixture. Use a fixture or dry run for operations with side effects. Read the exit status and diagnostics, repair errors, and rerun until the command exits zero and the report has valid=true. If a dependency must first be registered, explain which one and ask before importing it. If validation is blocked, report the blocker.
 
-Report each package's path, kind, ID and observed validation result. Distinguish static validation from any runtime checks you actually ran. Offer New → Import a workflow or external tool only after successful validation. Ask before importing or overwriting a package.
+Report each package's path, kind, ID and observed validation result. Report static validation, dependency checks, and any execution checks separately. Name dependencies that still need input or credentials. Offer New → Import a workflow or external tool only after successful validation. Ask before importing or overwriting a package.

@@ -169,13 +169,14 @@
    {#if scenario==='session'}<label for="prompt">First message</label><textarea id="prompt" bind:this={firstMessage} rows="5" bind:value={message} placeholder="optional"></textarea>{/if}
   {:else if scenario==='workflow'}
    <label for="workflow">Workflow</label>
-   <select id="workflow" value={workflowID} onchange={e=>selectWorkflow(e.currentTarget.value)}>
+   <select id="workflow" aria-describedby={selectedWorkflow?.description ? "workflow-description" : undefined} value={workflowID} onchange={e=>selectWorkflow(e.currentTarget.value)}>
     <option value="">{workflowLoading?'Checking workflows…':workflows.length?'Select a workflow':'No ready workflows'}</option>
     {#each workflows as workflow (workflow.id)}
      <option value={workflow.id}>{workflow.id} · {workflow.version}</option>
     {/each}
    </select>
    {#if selectedWorkflow}
+    {#if selectedWorkflow.description}<p id="workflow-description" class="hint workflow-description">{selectedWorkflow.description}</p>{/if}
     <WorkflowInputs fields={selectedWorkflow.form.fields} values={workflowInputs} errors={workflowErrors} {history}
      onchange={(name,value)=>{workflowInputs[name]=value;delete workflowErrors[name]}}/>
     <label for="repo">Working folder</label>
@@ -198,6 +199,7 @@
  .dialog{width:min(560px,100%);max-height:calc(88vh - 16px);overflow:auto;margin:0;padding:18px;background:var(--elevated);border:1px solid var(--border);border-radius:var(--radius);display:flex;flex-direction:column;gap:6px;font-size:13px}
  h2{font:600 15px var(--sans);margin-bottom:4px}
  label,small{font:600 11px var(--mono);color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin-top:8px}
+ .workflow-description{white-space:pre-line;overflow-wrap:anywhere}
  .hint{color:var(--text-3);font-size:12px}
  .choice-set{border:0;margin:0;padding:0;min-width:0}.choice-set legend{font:600 11px var(--mono);color:var(--text-3);letter-spacing:.08em;text-transform:uppercase;margin:8px 0}.kind-choice{display:flex;gap:4px}.kind-choice button{height:30px;flex:1;justify-content:center}.kind-choice button.selected{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 55%,var(--border));background:var(--accent-glow)}
  .combo { position: relative; }

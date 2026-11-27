@@ -111,3 +111,50 @@ func TestClaudeDedupCodexResetsAgyUnavailableAndAmbiguity(t *testing.T) {
 		t.Fatalf("expected CoverageUnavailable for agy missing fields, got %+v err=%v", rcp, err)
 	}
 }
+
+func TestAgyTranscriptAttributionAndDeduplication(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(t.Context(), filepath.Join(dir, "flows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// Native CLI transcript rows report uncached input and cache reads separately.
+	transcript := `{"type":"USER_INPUT","status":"DONE","step_index":0,"created_at":"2026-11-27T12:00:00Z"}
+{"type":"PLANNER_RESPONSE","status":"DONE","step_index":1,"created_at":"2026-11-27T12:00:01Z","model":"gemini","input_tokens":12,"cache_read_tokens":60,"output_tokens":9}
+{"type":"PLANNER_RESPONSE","status":"DONE","step_index":2,"created_at":"2026-11-27T12:00:03Z","model":"gemini","input_tokens":4,"output_tokens":7}
+`
+	path := filepath.Join(dir, "transcript.jsonl")
+	if err := os.WriteFile(path, []byte(transcript), 0600); err != nil {
+		t.Fatal(err)
+	}
+	const conversation = "agy-conversation"
+	if _, err := usage.CollectAgyTranscript(t.Context(), st, path, conversation, nil); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	bindings := []usage.SessionBinding{
+		{ConversationID: conversation, SessionID: "one", RunID: "one", StartedAt: start.UnixNano(), EndedAt: start.Add(2 * time.Second).UnixNano(), Coverage: usage.CoverageFinal},
+		{ConversationID: conversation, SessionID: "two", RunID: "two", StartedAt: start.Add(2 * time.Second).UnixNano(), Coverage: usage.CoverageLive},
+	}
+	chunk := filepath.Join(dir, "chunk.jsonl")
+	if err := os.WriteFile(chunk, []byte(transcript), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{path, chunk, path} {
+		if _, err := usage.CollectAgyTranscript(t.Context(), st, file, conversation, bindings); err != nil {
+			t.Fatal(err)
+		}
+	}
+	total, err := usage.Aggregate(t.Context(), st.DB(), usage.QueryFilter{Harness: "agy"})
+	if err != nil || total.Requests != 2 || total.UncachedInputTokens != 16 || total.CacheReadTokens != 60 || total.OutputTokens != 16 {
+		t.Fatalf("wrong agy totals: %+v (%v)", total, err)
+	}
+	for id, want := range map[string]int64{"one": 81, "two": 11} {
+		bound, err := usage.Aggregate(t.Context(), st.DB(), usage.QueryFilter{Harness: "agy", RunID: id})
+		if err != nil || bound.KnownSubtotal != want || bound.Requests != 1 {
+			t.Fatalf("wrong usage for %s: %+v (%v)", id, bound, err)
+		}
+	}
+}

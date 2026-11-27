@@ -1,16 +1,19 @@
 package localapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/paths"
 )
 
 type importRequest struct {
-	Directory      string `json:"directory"`
-	AllowOverwrite bool   `json:"allow_overwrite,omitempty"`
+	Directory         string `json:"directory"`
+	AllowOverwrite    bool   `json:"allow_overwrite,omitempty"`
+	CheckDependencies bool   `json:"check_dependencies,omitempty"`
 }
 
 func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, worker *libraryReconciler) {
@@ -46,10 +49,16 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, work
 			return
 		}
 		report := library.Validate(home, req.Directory)
+		importable := canImportPackage(report)
+		if req.CheckDependencies && report.Valid {
+			ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+			defer cancel()
+			report = library.ValidateWithDependencies(ctx, home, req.Directory)
+		}
 		writeJSON(w, http.StatusOK, struct {
 			library.ValidationReport
 			Importable bool `json:"importable"`
-		}{report, canImportPackage(report)})
+		}{report, importable})
 	case "/v1/library/import":
 		if !method(w, r, http.MethodPost) {
 			return

@@ -24,7 +24,12 @@ func run() int {
 	if len(args) >= 1 {
 		switch args[0] {
 		case "register":
-			if err := register(); err != nil {
+			restart := len(args) == 2 && args[1] == "--restart"
+			if len(args) != 1 && !restart {
+				fmt.Fprintln(os.Stderr, "Usage: flowsd register [--restart]")
+				return 2
+			}
+			if err := register(restart); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1
 			}
@@ -48,7 +53,7 @@ func run() int {
 				return 0
 			}
 		case "--help", "-h":
-			fmt.Fprintln(os.Stdout, "Usage: flowsd {version|register|run [--home <dir>]}")
+			fmt.Fprintln(os.Stdout, "Usage: flowsd {version|register [--restart]|run [--home <dir>]}")
 			return 0
 		}
 	}
@@ -65,7 +70,7 @@ func serve() error {
 	return localapi.Run(ctx, home, command.Version)
 }
 
-func register() error {
+func register(restart bool) error {
 	home, err := paths.Resolve()
 	if err != nil {
 		return err
@@ -81,7 +86,7 @@ func register() error {
 	label := home.ServiceLabel()
 	plist := filepath.Join(env["HOME"], "Library", "LaunchAgents", label+".plist")
 	return install.RegisterLaunchd(context.Background(), nil, plist, install.LaunchdConfig{
-		Label: label, DaemonBin: bin, HomeDir: env["FLOWS_HOME"], LogDir: home.Logs, ConfigHome: env["XDG_CONFIG_HOME"],
+		Restart: restart, Label: label, DaemonBin: bin, HomeDir: env["FLOWS_HOME"], LogDir: home.Logs, ConfigHome: env["XDG_CONFIG_HOME"],
 		SearchPath: strings.Join([]string{filepath.Join(env["HOME"], ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"}, ":"),
 	})
 }

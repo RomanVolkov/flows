@@ -30,6 +30,11 @@
     "entry": {
       "type": "string"
     },
+    "required_clis": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
     "credentials": {
       "type": "array",
       "items": {

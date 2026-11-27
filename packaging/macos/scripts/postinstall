@@ -20,7 +20,5 @@ install -d -m 700 "$config" "$config/spec"
 mkdir -p "$config/spec/v1"
 cp -R "$app/Contents/Resources/spec/v1/." "$config/spec/v1/"
 "$cli" install-bundled
-job="gui/$(id -u)/dev.flows.daemon"
-if launchctl print "$job" >/dev/null 2>&1; then launchctl bootout "$job"; fi
-"$app/Contents/MacOS/flowsd" register
+"$app/Contents/MacOS/flowsd" register --restart
 "$cli" status

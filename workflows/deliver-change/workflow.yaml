@@ -1,6 +1,7 @@
 schema: flows/v1
 id: deliver-change
 version: 1.0.0
+description: Turn a change request into task groups, approve the groups, and have coding agents draft and review a plan for each group.
 inputs:
   request:
     type: string

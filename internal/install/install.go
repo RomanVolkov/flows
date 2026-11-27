@@ -97,6 +97,7 @@ func Install(ctx context.Context, opts Options) (Manifest, error) {
 		DaemonBin: daemonBin,
 		HomeDir:   launchdHome,
 		LogDir:    logDir,
+		Restart:   true,
 	}); err != nil {
 		return Manifest{}, fmt.Errorf("step register launchd: %w", err)
 	}
