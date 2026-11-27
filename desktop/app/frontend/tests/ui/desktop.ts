@@ -27,7 +27,8 @@ declare global {
   }
 }
 
-function installBridge(initial: Snapshot) {
+function installBridge(config: { initial: Snapshot; native?: boolean }) {
+  const { initial, native = false } = config
   const listeners = new Map<string, Set<(data: unknown) => void>>()
   const calls: Call[] = []
   function emit(event: string, data: unknown) {
@@ -59,7 +60,7 @@ function installBridge(initial: Snapshot) {
     lines: [{ y: 0, cells: [{ t: '$' }] }] })
   const streams = new Map<string, ReturnType<typeof frame>[]>()
   const readers = new Map<string, () => void>()
-  const app = {
+  const app: Record<string, unknown> = {
     Follow() { emit('flows:snapshot', initial) },
     async Request(action: string, payload: string) {
       calls.push({ action, args: [payload] })
@@ -73,6 +74,7 @@ function installBridge(initial: Snapshot) {
     },
     async AttachScreen(attempt: string) {
       const id = 'terminal:' + attempt
+      calls.push({ action: 'attachScreen', args: [attempt] })
       streams.set(id, [frame(5, { owner_id: id }), screen])
       return id
     },
@@ -89,15 +91,36 @@ function installBridge(initial: Snapshot) {
       streams.delete(id)
     },
   }
+  if (native) {
+    app.OpenNativeTerminal = async (attempt: string, x: number, y: number, width: number, height: number, fontSize: number) => {
+      const id = 'native:' + attempt
+      calls.push({ action: 'openNative', args: [attempt, x, y, width, height, fontSize] })
+      queueMicrotask(() => {
+        emit('flows:terminal-native:' + id, { type: 'ready', scrolled: 0 })
+        emit('flows:terminal-native:' + id, { type: 'input_owner', owner_id: id, is_owner: true })
+      })
+      return id
+    }
+    app.SetNativeTerminalBounds = async (id: string, x: number, y: number, width: number, height: number) => {
+      calls.push({ action: 'setNativeBounds', args: [id, x, y, width, height] })
+    }
+    app.FocusNativeTerminal = async (id: string) => {
+      calls.push({ action: 'focusNative', args: [id] })
+    }
+    app.ClaimNativeTerminalInput = async (id: string) => {
+      calls.push({ action: 'claimNativeInput', args: [id] })
+      emit('flows:terminal-native:' + id, { type: 'input_owner', owner_id: id, is_owner: true })
+    }
+  }
   Object.assign(window, { go: { main: { App: app } } })
 }
 
-export const test = base.extend<{ launch: (snapshot?: Snapshot) => Promise<void> }>({
+export const test = base.extend<{ launch: (snapshot?: Snapshot, options?: { native?: boolean }) => Promise<void> }>({
   launch: async ({ page }, use) => {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
-    await use(async (snapshot = empty) => {
-      await page.addInitScript(installBridge, snapshot)
+    await use(async (snapshot = empty, options = {}) => {
+      await page.addInitScript(installBridge, { initial: snapshot, native: options.native ?? false })
       await page.goto('/')
       await expect(page.getByRole('button', { name: /New session/ })).toBeVisible()
     })

@@ -49,8 +49,18 @@ NS_ASSUME_NONNULL_BEGIN
 @property(nonatomic, copy, nullable) void (^onExit)(int code);
 @property(nonatomic, copy, nullable) void (^onFenced)(NSString *reason);
 @property(nonatomic, copy, nullable) void (^onScrollbar)(uint64_t total, uint64_t offset, uint64_t len);
+@property(nonatomic, copy, nullable) void (^onTitle)(NSString *title);
+@property(nonatomic, copy, nullable) void (^onCloseShortcut)(void);
 
 - (BOOL)attachWithExecutable:(NSString *)executable
+                  socketPath:(NSString *)socketPath
+                   sessionID:(NSString *)sessionID
+                    clientID:(nullable NSString *)clientID
+                       nonce:(nullable NSString *)nonce
+                       epoch:(uint64_t)epoch
+                    fontSize:(float)fontSize;
+- (BOOL)attachWithExecutable:(NSString *)executable
+                  subcommand:(NSString *)subcommand
                   socketPath:(NSString *)socketPath
                    sessionID:(NSString *)sessionID
                     clientID:(nullable NSString *)clientID

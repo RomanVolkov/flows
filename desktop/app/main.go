@@ -11,12 +11,17 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/romanvolkov/flows/internal/client"
+	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/localapi"
 	"github.com/romanvolkov/flows/internal/paths"
 	"github.com/romanvolkov/flows/internal/store"
@@ -31,8 +36,9 @@ import (
 var assets embed.FS
 
 type App struct {
-	terminals sync.Map
-	home      paths.Home
+	terminals       sync.Map
+	nativeTerminals sync.Map
+	home            paths.Home
 	ctx       context.Context
 	mu        sync.Mutex
 	file      string
@@ -237,7 +243,28 @@ func (a *App) connection(ok bool, err error) {
 func (a *App) Clipboard(text string) bool {
 	return a.ctx != nil && wailsruntime.ClipboardSetText(a.ctx, text) == nil
 }
+func runNativeAttach(socketPath, sessionID string) error {
+	var epoch uint64
+	if raw := os.Getenv("FLOWS_ATTACH_EPOCH"); raw != "" {
+		epoch, _ = strconv.ParseUint(raw, 10, 64)
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	return host.AttachNative(ctx, socketPath, sessionID, os.Stdin, os.Stdout, host.NativeAttachOptions{
+		ClientID:      os.Getenv("FLOWS_ATTACH_CLIENT_ID"),
+		Nonce:         os.Getenv("FLOWS_ATTACH_NONCE"),
+		Epoch:         epoch,
+		ControlSocket: os.Getenv("FLOWS_ATTACH_CTL"),
+	})
+}
+
 func main() {
+	if len(os.Args) >= 4 && os.Args[1] == "--native-attach" {
+		if err := runNativeAttach(os.Args[2], os.Args[3]); err != nil && !errors.Is(err, context.Canceled) {
+			log.Fatal(err)
+		}
+		return
+	}
 	home, err := paths.Resolve()
 	if err != nil {
 		log.Fatal(err)

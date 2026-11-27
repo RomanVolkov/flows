@@ -16,6 +16,12 @@ export function measure(ctx: CanvasRenderingContext2D, family: string, size: num
 
 // cellAt is the cell under a pixel; gridSize the cols and rows that fit a box.
 export const cellAt = (m: Metrics, px: number, py: number) => ({ x: Math.floor(px / m.w), y: Math.floor(py / m.h) })
+export const contentBounds = (rect: { left: number; top: number; width: number; height: number }, pad: number) => ({
+  x: rect.left + pad,
+  y: rect.top + pad,
+  width: Math.max(10, rect.width - 2 * pad),
+  height: Math.max(10, rect.height - 2 * pad),
+})
 export const gridSize = (m: Metrics, width: number, height: number) => ({
   cols: Math.max(10, Math.floor(width / m.w)),
   rows: Math.max(3, Math.floor(height / m.h)),

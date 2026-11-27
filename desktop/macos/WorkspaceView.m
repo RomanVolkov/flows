@@ -1,5 +1,8 @@
 #import <AppKit/AppKit.h>
 #import <CoreText/CoreText.h>
+#import "TerminalView.h"
+
+NS_ASSUME_NONNULL_BEGIN
 
 static NSColor *flowsHexColor(NSString *hex) {
     NSString *clean = [hex hasPrefix:@"#"] ? [hex substringFromIndex:1] : hex;
@@ -41,12 +44,17 @@ static NSFont *flowsMonoFont(CGFloat size) {
 @property(nonatomic, strong) FlowsPaneView *canvasView;
 @property(nonatomic, strong) FlowsPaneView *inspectorView;
 @property(nonatomic, strong) FlowsPaneView *terminalDockView;
+@property(nonatomic, strong) TerminalView *terminalView;
 @property(nonatomic, strong) NSTextField *selectionSummaryLabel;
 @property(nonatomic, strong) NSTextField *footerLabel;
 @property(nonatomic) BOOL dockOpen;
 @property(nonatomic) BOOL inputOwner;
-@property(nonatomic, copy) NSString *activeSessionID;
+@property(nonatomic, copy, nullable) NSString *activeSessionID;
 - (void)attachSession:(NSString *)sessionID;
+- (BOOL)attachSession:(NSString *)sessionID
+           executable:(NSString *)executable
+           socketPath:(NSString *)socketPath
+                nonce:(nullable NSString *)nonce;
 - (void)detachDock;
 - (void)cycleFocus;
 - (BOOL)handleKeyEvent:(NSEvent *)event;
@@ -112,7 +120,11 @@ static NSFont *flowsMonoFont(CGFloat size) {
     _terminalDockView = [[FlowsPaneView alloc] initWithFrame:NSMakeRect(580, 28, 360, 692)];
     _terminalDockView.paneName = @"terminal";
     _terminalDockView.fillColor = flowsHexColor(@"#101019");
+    _terminalDockView.autoresizesSubviews = YES;
     _terminalDockView.hidden = YES;
+    _terminalView = [[TerminalView alloc] initWithFrame:_terminalDockView.bounds];
+    _terminalView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    [_terminalDockView addSubview:_terminalView];
     [root addSubview:_terminalDockView];
 
     _footerLabel = [NSTextField labelWithString:@"Ready"];
@@ -126,6 +138,7 @@ static NSFont *flowsMonoFont(CGFloat size) {
 }
 
 - (void)attachSession:(NSString *)sessionID {
+    [self.terminalView detach];
     self.activeSessionID = sessionID;
     self.dockOpen = sessionID.length > 0;
     self.inputOwner = self.dockOpen;
@@ -140,7 +153,48 @@ static NSFont *flowsMonoFont(CGFloat size) {
     }
 }
 
+- (BOOL)attachSession:(NSString *)sessionID
+           executable:(NSString *)executable
+           socketPath:(NSString *)socketPath
+                nonce:(nullable NSString *)nonce {
+    if (sessionID.length == 0 || executable.length == 0 || socketPath.length == 0) {
+        return NO;
+    }
+    __weak typeof(self) weakSelf = self;
+    self.terminalView.onInputOwnerChanged = ^(BOOL isOwner) {
+        weakSelf.inputOwner = isOwner;
+    };
+    self.terminalView.onCloseShortcut = ^{
+        [weakSelf detachDock];
+    };
+    self.terminalView.onExit = ^(int code) {
+        (void)code;
+        [weakSelf detachDock];
+    };
+    self.activeSessionID = sessionID;
+    self.dockOpen = YES;
+    self.terminalDockView.hidden = NO;
+    self.detachButton.hidden = NO;
+    self.canvasView.frame = NSMakeRect(220, 28, 360, 692);
+    self.terminalDockView.frame = NSMakeRect(580, 28, 360, 692);
+    BOOL ok = [self.terminalView attachWithExecutable:executable
+                                           socketPath:socketPath
+                                            sessionID:sessionID
+                                             clientID:nil
+                                                nonce:nonce
+                                                epoch:0
+                                             fontSize:19.0f];
+    if (!ok) {
+        [self detachDock];
+        return NO;
+    }
+    self.inputOwner = self.terminalView.inputOwner;
+    [self.window makeFirstResponder:self.terminalView];
+    return YES;
+}
+
 - (void)detachDock {
+    [self.terminalView detach];
     self.dockOpen = NO;
     self.inputOwner = NO;
     self.terminalDockView.hidden = YES;
@@ -150,8 +204,9 @@ static NSFont *flowsMonoFont(CGFloat size) {
 }
 
 - (void)cycleFocus {
+    NSView *terminalFocusTarget = self.terminalView.surface ? (NSView *)self.terminalView : self.terminalDockView;
     NSArray<NSView *> *order = self.dockOpen
-        ? @[self.sidebarView, self.canvasView, self.inspectorView, self.terminalDockView]
+        ? @[self.sidebarView, self.canvasView, self.inspectorView, terminalFocusTarget]
         : @[self.sidebarView, self.canvasView, self.inspectorView];
     NSUInteger idx = [order indexOfObject:(NSView *)self.window.firstResponder];
     NSUInteger next = (idx == NSNotFound) ? 0 : (idx + 1) % order.count;
@@ -166,7 +221,9 @@ static NSFont *flowsMonoFont(CGFloat size) {
             return YES;
         }
     }
-    if (event.keyCode == 53 && self.window.firstResponder == self.terminalDockView) {
+    BOOL terminalFocused = (self.window.firstResponder == self.terminalDockView ||
+                            self.window.firstResponder == self.terminalView);
+    if (event.keyCode == 53 && terminalFocused) {
         // Escape goes to the harness when terminal has focus.
         return YES;
     }
@@ -174,8 +231,12 @@ static NSFont *flowsMonoFont(CGFloat size) {
 }
 
 - (void)windowWillClose:(NSNotification *)notification {
+    (void)notification;
     // Closing the window releases input ownership while leaving the underlying session host alive.
+    [self.terminalView detach];
     self.inputOwner = NO;
 }
 
 @end
+
+NS_ASSUME_NONNULL_END

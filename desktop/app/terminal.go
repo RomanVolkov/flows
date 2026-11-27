@@ -17,6 +17,62 @@ import (
 	"github.com/romanvolkov/flows/internal/localapi"
 )
 
+var ErrNativeTerminalUnavailable = errors.New("native terminal unavailable")
+
+func (a *App) lookupSession(attempt string) (localapi.SessionSummary, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	c := client.New(a.home.Socket())
+	defer c.Close()
+	var sessions []localapi.SessionSummary
+	if err := c.JSON(ctx, "GET", "/v1/sessions", "", &sessions); err != nil {
+		return localapi.SessionSummary{}, err
+	}
+	for _, s := range sessions {
+		if s.AttemptID == attempt {
+			return s, nil
+		}
+	}
+	return localapi.SessionSummary{}, errors.New("this session has no attached host")
+}
+
+func (a *App) OpenNativeTerminal(attempt string, x, y, width, height, fontSize float64) (string, error) {
+	if !nativeTerminalSupported() {
+		return "", ErrNativeTerminalUnavailable
+	}
+	s, err := a.lookupSession(attempt)
+	if err != nil {
+		return "", err
+	}
+	id := rand.Text()
+	if err := openNativeTerminal(a, id, s.SocketPath, s.SessionID, s.StartNonce, x, y, width, height, fontSize); err != nil {
+		return "", err
+	}
+	a.nativeTerminals.Store(id, struct{}{})
+	return id, nil
+}
+
+func (a *App) SetNativeTerminalBounds(id string, x, y, width, height float64) error {
+	if _, ok := a.nativeTerminals.Load(id); !ok {
+		return errors.New("terminal closed")
+	}
+	return setNativeTerminalBounds(id, x, y, width, height)
+}
+
+func (a *App) FocusNativeTerminal(id string) error {
+	if _, ok := a.nativeTerminals.Load(id); !ok {
+		return errors.New("terminal closed")
+	}
+	return focusNativeTerminal(id)
+}
+
+func (a *App) ClaimNativeTerminalInput(id string) error {
+	if _, ok := a.nativeTerminals.Load(id); !ok {
+		return errors.New("terminal closed")
+	}
+	return claimNativeTerminalInput(id)
+}
+
 func (a *App) Attach(attempt string) (string, error) {
 	return a.attach(attempt, false, false)
 }
@@ -28,27 +84,19 @@ func (a *App) AttachScreen(attempt string) (string, error) {
 func (a *App) OpenPreview(attempt string) (string, error) { return a.attach(attempt, true, true) }
 
 func (a *App) attach(attempt string, preview, screenOnly bool) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-	defer cancel()
-	c := client.New(a.home.Socket())
-	defer c.Close()
-	var sessions []localapi.SessionSummary
-	if err := c.JSON(ctx, "GET", "/v1/sessions", "", &sessions); err != nil {
+	s, err := a.lookupSession(attempt)
+	if err != nil {
 		return "", err
 	}
-	for _, s := range sessions {
-		if s.AttemptID != attempt {
-			continue
-		}
-		id := rand.Text()
-		conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{Preview: preview, ScreenOnly: screenOnly, ClientID: id, Nonce: s.StartNonce})
-		if err != nil {
-			return "", err
-		}
-		a.terminals.Store(id, conn)
-		return id, nil
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	id := rand.Text()
+	conn, err := host.DialAttach(ctx, s.SocketPath, s.SessionID, host.AttachOptions{Preview: preview, ScreenOnly: screenOnly, ClientID: id, Nonce: s.StartNonce})
+	if err != nil {
+		return "", err
 	}
-	return "", errors.New("this session has no attached host")
+	a.terminals.Store(id, conn)
+	return id, nil
 }
 func (a *App) OpenTerminal(id string) error               { _, err := a.Attach(id); return err }
 func (a *App) CloseTerminal(id string)                    { a.Detach(id) }
@@ -149,6 +197,10 @@ func (a *App) ResizeTerminal(id string, cols, rows int) error {
 	return v.(*host.AttachConn).SendResize(ctx, uint16(cols), uint16(rows), 0, 0)
 }
 func (a *App) Detach(id string) {
+	if _, ok := a.nativeTerminals.LoadAndDelete(id); ok {
+		closeNativeTerminal(id)
+		return
+	}
 	if v, ok := a.terminals.LoadAndDelete(id); ok {
 		_ = v.(*host.AttachConn).Close()
 	}

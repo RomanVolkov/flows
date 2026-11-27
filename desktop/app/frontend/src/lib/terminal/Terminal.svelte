@@ -1,11 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { encodeKey, encodePaste } from './keys'
-  import { cellAt, gridSize, measure, paint, type Metrics } from './paint'
+  import { cellAt, contentBounds, gridSize, measure, paint, type Metrics } from './paint'
   import { applyFrame, blank, type Screen } from './screen'
   import { altPages, mouseWheel, wheelRows } from './scroll'
   import { contains, selectedText, type Selection } from './selection'
   import { monoStack, theme } from '../theme'
+
+  interface NativeEvent {
+    type: string
+    owner_id?: string
+    reason?: string
+    title?: string
+    scrolled?: number
+    exit_code?: number
+    is_owner?: boolean
+  }
 
   let { sessionId, title, agent = '', onclose }: { sessionId: string; title: string; agent?: string; onclose: () => void } = $props()
 
@@ -15,6 +25,10 @@
   let screen = $state<Screen>(blank())
   let output = $state('') // a pipe session sends raw output, no screen
   let status = $state('connecting…')
+  let mode = $state<'native' | 'canvas'>('canvas')
+  let nativeTitle = $state('')
+  let nativeScrolled = $state(0)
+  let nativeOwner = $state(false)
   let metrics: Metrics | undefined
   let selection = $state<Selection | undefined>()
   let composing = false
@@ -24,8 +38,12 @@
   let owner = false
   let hasScreen = false
 
+  function boxBounds() {
+    return contentBounds(box.getBoundingClientRect(), $theme.padding + 4)
+  }
+
   function redraw() {
-    if (!metrics || !canvas) return
+    if (mode === 'native' || !metrics || !canvas) return
     const dpr = window.devicePixelRatio || 1
     const cw = Math.round(screen.cols * metrics.w * dpr), ch = Math.round(screen.rows * metrics.h * dpr)
     if (canvas.width !== cw || canvas.height !== ch) {
@@ -40,6 +58,7 @@
       { cursor: $theme.cursor, selection: $theme.selection_background, selectionInk: $theme.selection_foreground })
   }
   $effect(() => {
+    mode
     screen
     selection
     $theme.background_opacity
@@ -51,7 +70,7 @@
   // frames come faster than the screen refreshes: paint once per animation frame
   let pending = false
   function schedule() {
-    if (pending) return
+    if (pending || mode === 'native') return
     pending = true
     requestAnimationFrame(() => {
       pending = false
@@ -60,10 +79,16 @@
   }
 
   function fitSize() {
+    if (mode === 'native') {
+      if (terminalId && api.SetNativeTerminalBounds) {
+        const b = boxBounds()
+        api.SetNativeTerminalBounds(terminalId, b.x, b.y, b.width, b.height).catch(() => {})
+      }
+      return
+    }
     if (!metrics) return
-    const r = box.getBoundingClientRect()
-    const pad = 2 * ($theme.padding + 4)
-    const { cols, rows } = gridSize(metrics, r.width - pad, r.height - pad)
+    const b = boxBounds()
+    const { cols, rows } = gridSize(metrics, b.width, b.height)
     if (owner && terminalId && (cols !== sent.cols || rows !== sent.rows)) {
       sent = { cols, rows }
       api.ResizeTerminal(terminalId, cols, rows).catch((e: unknown) => (status = String(e)))
@@ -75,7 +100,53 @@
     api = window.go.main.App
     let stopped = false
     let unsubscribe: (() => void) | undefined
-    async function connect() {
+
+    async function connectNative(): Promise<boolean> {
+      if (typeof api.OpenNativeTerminal !== 'function') return false
+      try {
+        const b = boxBounds()
+        const id = await api.OpenNativeTerminal(sessionId, b.x, b.y, b.width, b.height, $theme.font_size)
+        if (stopped) {
+          await api.Detach(id).catch(() => {})
+          return true
+        }
+        terminalId = id
+        mode = 'native'
+        unsubscribe = window.runtime.EventsOn(`flows:terminal-native:${terminalId}`, (evt: NativeEvent) => {
+          if (stopped) return
+          switch (evt.type) {
+            case 'ready':
+              nativeScrolled = evt.scrolled ?? 0
+              if (status === 'connecting…') status = ''
+              fitSize()
+              break
+            case 'input_owner':
+              nativeOwner = owner = !!evt.is_owner
+              status = owner ? '' : `Viewing · input owned by another terminal · ${agent}`
+              break
+            case 'scrollbar':
+              nativeScrolled = evt.scrolled ?? 0
+              break
+            case 'title':
+              if (evt.title) nativeTitle = evt.title
+              break
+            case 'fenced':
+              status = `Input fenced: ${evt.reason || 'not input owner'}`
+              break
+            case 'close_requested':
+            case 'exit':
+              onclose()
+              break
+          }
+        })
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    async function connectCanvas() {
+      mode = 'canvas'
       try {
         terminalId = await api.AttachScreen(sessionId)
         if (stopped) {
@@ -106,14 +177,22 @@
         owner = false
       }
     }
+
+    async function connect() {
+      if (await connectNative()) return
+      if (!stopped) await connectCanvas()
+    }
+
     void connect()
     const ro = new ResizeObserver(fitSize)
     ro.observe(box)
+    window.addEventListener('resize', fitSize)
     input.focus()
     return () => {
       stopped = true
       unsubscribe?.()
       ro.disconnect()
+      window.removeEventListener('resize', fitSize)
       if (terminalId) api.Detach(terminalId).catch(() => {})
     }
   })
@@ -126,7 +205,7 @@
   let wheelRest = 0
   let pageRest = 0
   function wheel(e: WheelEvent) {
-    if (!metrics || output) return
+    if (mode === 'native' || !metrics || output) return
     const r = wheelRows(wheelRest, e, metrics.h, screen.rows)
     wheelRest = r.rest
     if (r.rows === 0) return
@@ -150,6 +229,13 @@
   }
 
   function keydown(e: KeyboardEvent) {
+    if (mode === 'native') {
+      if (e.metaKey && e.key === 'w') {
+        e.preventDefault()
+        onclose()
+      }
+      return
+    }
     if (composing || e.isComposing) return
     if (e.metaKey && e.key === 'w') { // Esc belongs to the program (claude cancels with it)
       e.preventDefault()
@@ -180,14 +266,30 @@
     )
   }
   function paste(e: ClipboardEvent) {
+    if (mode === 'native') return
     e.preventDefault()
     const t = e.clipboardData?.getData('text/plain')
     if (t) send(encodePaste(t, screen.paste))
   }
   function compositionend(e: CompositionEvent) {
+    if (mode === 'native') return
     composing = false
     if (e.data) send(e.data)
     input.value = ''
+  }
+
+  function focusTerminal() {
+    if (mode === 'native') {
+      if (terminalId) api.FocusNativeTerminal?.(terminalId).catch(() => {})
+    } else {
+      input.focus()
+    }
+  }
+
+  function claimInput() {
+    if (mode === 'native' && terminalId) {
+      api.ClaimNativeTerminalInput?.(terminalId).catch((e: unknown) => (status = String(e)))
+    }
   }
 
   let dragging = false
@@ -196,33 +298,40 @@
     return cellAt(metrics!, e.clientX - r.left, e.clientY - r.top)
   }
   function down(e: PointerEvent) {
-    if (!metrics) return
+    if (mode === 'native' || !metrics) return
     dragging = true
     const p = cell(e)
     selection = { from: p, to: p }
     canvas.setPointerCapture(e.pointerId)
   }
   function move(e: PointerEvent) {
-    if (dragging && selection) selection = { from: selection.from, to: cell(e) }
+    if (mode !== 'native' && dragging && selection) selection = { from: selection.from, to: cell(e) }
   }
   function up() {
+    if (mode === 'native') return
     dragging = false
     if (selection && selection.from.x === selection.to.x && selection.from.y === selection.to.y) selection = undefined
     input.focus()
   }
+
+  let displayTitle = $derived(mode === 'native' ? (nativeTitle || title) : (screen.title || title))
+  let displayScrolled = $derived(mode === 'native' ? nativeScrolled : screen.scrolled)
 </script>
 
-<div class="overlay" role="dialog" aria-label={title}>
+<div class="overlay" role="dialog" aria-label={title} data-renderer={mode}>
   <div class="window">
     <header>
-      <span>{screen.title || title}</span>
-      {#if screen.scrolled > 0}<em>↑ {screen.scrolled} lines back · type to return</em>{/if}
+      <span>{displayTitle}</span>
+      {#if displayScrolled > 0}<em>↑ {displayScrolled} lines back · type to return</em>{/if}
       {#if status}<em>{status}</em>{/if}
+      {#if mode === 'native' && !nativeOwner && status}
+        <button class="quiet" onclick={claimInput}>Claim input</button>
+      {/if}
       <button class="quiet" onclick={onclose} title="Close (the session keeps running)">⌘W ✕</button>
     </header>
-    <div class="box" style:--pad="{$theme.padding}px" bind:this={box} onclick={() => input.focus()} onwheel={wheel} role="presentation">
-      {#if output}<pre>{output}</pre>{/if}
-      <canvas bind:this={canvas} onpointerdown={down} onpointermove={move} onpointerup={up} class:hidden={!!output}></canvas>
+    <div class="box" style:--pad="{$theme.padding}px" bind:this={box} onclick={focusTerminal} onwheel={wheel} role="presentation">
+      {#if mode === 'canvas' && output}<pre>{output}</pre>{/if}
+      <canvas bind:this={canvas} onpointerdown={down} onpointermove={move} onpointerup={up} class:hidden={mode === 'native' || !!output}></canvas>
       <textarea
         bind:this={input}
         class="input"

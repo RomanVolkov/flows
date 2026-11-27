@@ -31,9 +31,9 @@ FRONTEND := desktop/app/frontend
 $(FRONTEND)/node_modules/.package-lock.json: $(FRONTEND)/package-lock.json $(FRONTEND)/package.json
 	@npm --prefix $(FRONTEND) ci --no-audit --no-fund
 
-desktop: desktop-fonts $(FRONTEND)/node_modules/.package-lock.json
+desktop: desktop-fonts libghostty $(FRONTEND)/node_modules/.package-lock.json
 	@npm --prefix $(FRONTEND) run build
-	@$(GO) build -tags 'desktop production' -ldflags '-extldflags "-framework UniformTypeIdentifiers"' -trimpath -o "$(BIN)/Flows-desktop" ./desktop/app
+	@CGO_CFLAGS='-I "$(GHOSTTY_DIR)/include"' CGO_LDFLAGS='"$(GHOSTTY_SURFACE_ARCHIVE)" -framework AppKit -framework Carbon -framework CoreText -framework IOSurface -framework Metal -framework QuartzCore -framework UniformTypeIdentifiers -lc++' $(GO) build -tags 'desktop production' -trimpath -o "$(BIN)/Flows-desktop" ./desktop/app
 
 .PHONY: package-daemon
 package-daemon: libghostty

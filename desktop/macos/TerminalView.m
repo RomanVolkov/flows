@@ -6,6 +6,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wnullability-completeness"
+
 static uint64_t gCtlSeq = 0;
 static int gLayerContentsKVOContext = 0;
 
@@ -390,6 +393,24 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
                        nonce:(nullable NSString *)nonce
                        epoch:(uint64_t)epoch
                     fontSize:(float)fontSize {
+    return [self attachWithExecutable:executable
+                           subcommand:@"attach"
+                           socketPath:socketPath
+                            sessionID:sessionID
+                             clientID:clientID
+                                nonce:nonce
+                                epoch:epoch
+                             fontSize:fontSize];
+}
+
+- (BOOL)attachWithExecutable:(NSString *)executable
+                  subcommand:(NSString *)subcommand
+                  socketPath:(NSString *)socketPath
+                   sessionID:(NSString *)sessionID
+                    clientID:(nullable NSString *)clientID
+                       nonce:(nullable NSString *)nonce
+                       epoch:(uint64_t)epoch
+                    fontSize:(float)fontSize {
     if (![FlowsGhosttyRuntime.sharedRuntime ensureInitialized]) return NO;
     [self detach];
 
@@ -400,8 +421,8 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
     self.fencedReason = nil;
     self.clientID = clientID ?: [NSString stringWithFormat:@"native-%d-%llu", getpid(), gCtlSeq];
 
-    NSString *cmd = [NSString stringWithFormat:@"%@ attach %@ %@",
-        shellQuote(executable), shellQuote(socketPath), shellQuote(sessionID)];
+    NSString *cmd = [NSString stringWithFormat:@"%@ %@ %@ %@",
+        shellQuote(executable), subcommand, shellQuote(socketPath), shellQuote(sessionID)];
 
     NSMutableArray<NSString *> *keys = [NSMutableArray arrayWithObjects:@"FLOWS_ATTACH_CTL", @"FLOWS_ATTACH_CLIENT_ID", nil];
     NSMutableArray<NSString *> *vals = [NSMutableArray arrayWithObjects:self.ctlSocketPath, self.clientID, nil];
@@ -504,6 +525,7 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
 
 - (void)handleTitleUpdate:(NSString *)title {
     self.terminalTitle = title;
+    if (self.onTitle) self.onTitle(title);
 }
 
 - (void)onDisplayLink:(CADisplayLink *)link {
@@ -641,6 +663,12 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
 
 - (void)keyDown:(NSEvent *)event {
     if (!self.surface) return;
+    if ((event.modifierFlags & NSEventModifierFlagCommand) &&
+        [[event.charactersIgnoringModifiers lowercaseString] isEqualToString:@"w"] &&
+        self.onCloseShortcut) {
+        self.onCloseShortcut();
+        return;
+    }
     if ((event.modifierFlags & NSEventModifierFlagCommand) &&
         [[event.charactersIgnoringModifiers lowercaseString] isEqualToString:@"c"] &&
         ghostty_surface_has_selection(self.surface)) {
@@ -784,3 +812,5 @@ static void writeClipboardCallback(void *context, ghostty_clipboard_e clipboard,
     return [self.window convertRectToScreen:windowRect];
 }
 @end
+
+#pragma clang diagnostic pop

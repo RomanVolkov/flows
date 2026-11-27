@@ -70,8 +70,8 @@ stop_host
 host=$!
 wait_ready "$work/scrolled.ready"
 sleep 0.2
-"$probe" scroll "$work/scrolled.sock" -40
-FLOWS_TERMINAL_MODE=scrolled FLOWS_EXPECT_HISTORY=ROW-0100 FLOWS_FORBID_BOTTOM=LIVE-BOTTOM \
+"$probe" scroll "$work/scrolled.sock" -80
+FLOWS_TERMINAL_MODE=scrolled FLOWS_EXPECT_HISTORY=ROW-0200 FLOWS_FORBID_BOTTOM=LIVE-BOTTOM \
     "$probe" window "$work/scrolled.sock"
 stop_host
 
@@ -80,4 +80,6 @@ stop_host
 host=$!
 wait_ready "$work/own.ready"
 FLOWS_TERMINAL_MODE=ownership "$probe" window "$work/own.sock"
+FLOWS_WORKSPACE_PROBE_EXE="$probe" FLOWS_WORKSPACE_SOCKET="$work/own.sock" FLOWS_WORKSPACE_SESSION="probe" \
+    "$(dirname "$probe")/flows-workspace-tests"
 stop_host

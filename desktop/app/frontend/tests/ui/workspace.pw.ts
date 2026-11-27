@@ -62,6 +62,54 @@ test('selects a canvas node, opens its terminal, sends input and detaches', asyn
   await expect(page.locator('footer')).toContainText('0 nodes')
 })
 
+test('uses the native terminal bridge without opening a duplicate canvas attach', async ({ page, launch }) => {
+  await launch(running, { native: true })
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Meta+Enter')
+  const terminal = page.getByRole('dialog', { name: 'Review changes' })
+  await expect(terminal).toHaveAttribute('data-renderer', 'native')
+  await expect.poll(() => page.evaluate(() => window.mockDesktop.calls.some(c => c.action === 'openNative'))).toBe(true)
+  expect(await page.evaluate(() => window.mockDesktop.calls.some(c => c.action === 'attachScreen'))).toBe(false)
+
+  await page.evaluate(() => {
+    window.mockDesktop.emit('flows:terminal-native:native:attempt-1', { type: 'title', title: 'Native Ghostty' })
+    window.mockDesktop.emit('flows:terminal-native:native:attempt-1', { type: 'scrollbar', scrolled: 12 })
+    window.mockDesktop.emit('flows:terminal-native:native:attempt-1', { type: 'input_owner', owner_id: 'other', is_owner: false })
+  })
+  await expect(terminal.getByText('Native Ghostty')).toBeVisible()
+  await expect(terminal.getByText(/↑ 12 lines back/)).toBeVisible()
+  await expect(terminal.getByText(/Viewing · input owned by another terminal/)).toBeVisible()
+
+  await terminal.getByRole('button', { name: 'Claim input' }).click()
+  await expect.poll(() => page.evaluate(() => window.mockDesktop.calls)).toContainEqual({
+    action: 'claimNativeInput', args: ['native:attempt-1'],
+  })
+  await expect(terminal.getByText(/Viewing · input owned by another terminal/)).toHaveCount(0)
+
+  await page.evaluate(() => {
+    window.mockDesktop.emit('flows:terminal-native:native:attempt-1', { type: 'close_requested' })
+  })
+  await expect(terminal).toHaveCount(0)
+  await expect.poll(() => page.evaluate(() => window.mockDesktop.calls)).toContainEqual({
+    action: 'detach', args: ['native:attempt-1'],
+  })
+})
+
+test('falls back cleanly to canvas when native attach fails without duplicating ownership', async ({ page, launch }) => {
+  await launch(running, { native: true })
+  await page.evaluate(() => {
+    window.go.main.App.OpenNativeTerminal = async () => {
+      throw new Error('native terminal unavailable')
+    }
+  })
+  await page.keyboard.press('ArrowRight')
+  await page.keyboard.press('Meta+Enter')
+  const terminal = page.getByRole('dialog', { name: 'Review changes' })
+  await expect(terminal).toHaveAttribute('data-renderer', 'canvas')
+  await expect(terminal.getByText('Mock shell')).toBeVisible()
+  expect(await page.evaluate(() => window.mockDesktop.calls.filter(c => c.action === 'attachScreen').length)).toBe(1)
+})
+
 for (const kind of ['Workflow', 'Tool']) {
   test(`starts the authoring interview for the selected ${kind.toLowerCase()}`, async ({ page, launch }) => {
     await launch()

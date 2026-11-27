@@ -1,6 +1,10 @@
 import { fromSnapshot, type Kind, type State } from './graph'
 declare global {
   interface Window {runtime:{EventsOn(event:string,callback:(data:any)=>void):()=>void};go:{main:{App:{Follow():void;OpenPreview(attempt:string):Promise<string>;Attach(attempt:string):Promise<string>;AttachScreen(attempt:string):Promise<string>;ReadTerminal(id:string):Promise<string>;StreamTerminal(id:string):Promise<void>;
+    OpenNativeTerminal?(attempt:string,x:number,y:number,width:number,height:number,fontSize:number):Promise<string>;
+    SetNativeTerminalBounds?(id:string,x:number,y:number,width:number,height:number):Promise<void>;
+    FocusNativeTerminal?(id:string):Promise<void>;
+    ClaimNativeTerminalInput?(id:string):Promise<void>;
     WriteTerminal(id:string,data:string):Promise<void>;ResizeTerminal(id:string,cols:number,rows:number):Promise<void>;OpenLibrary(kind:string):Promise<void>;
     Detach(id:string):Promise<void>;TermScroll(id:string,rows:number):Promise<void>;ScrollScreen(id:string,rows:number):Promise<void>;Clipboard(text:string):Promise<boolean>;
     Request(action:string,payload:string):Promise<string>,OpenedFile():Promise<string>}}}}

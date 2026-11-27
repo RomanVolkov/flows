@@ -10,7 +10,9 @@ int main(void) {
         [NSApplication sharedApplication];
         FlowsWorkspaceController *ctrl = [[FlowsWorkspaceController alloc] init];
 
-        // 1. Terminal-only controls hidden when no session exists.
+        // 1. Terminal-only controls hidden when no session exists, and native TerminalView embedded in dock.
+        assert(ctrl.terminalView != nil);
+        assert(ctrl.terminalView.superview == ctrl.terminalDockView);
         assert(ctrl.terminalDockView.hidden == YES);
         assert(ctrl.detachButton.hidden == YES);
         assert(ctrl.dockOpen == NO);
@@ -67,6 +69,51 @@ int main(void) {
         [ctrl windowWillClose:[NSNotification notificationWithName:NSWindowWillCloseNotification object:ctrl.window]];
         assert(ctrl.inputOwner == NO);
         assert([ctrl.activeSessionID isEqualToString:@"sess-2"]);
+
+        // 7. Live native WorkspaceView attach, focus/input, scroll, resize, detach, and reconnect.
+        NSString *probeExe = NSProcessInfo.processInfo.environment[@"FLOWS_WORKSPACE_PROBE_EXE"];
+        NSString *sock = NSProcessInfo.processInfo.environment[@"FLOWS_WORKSPACE_SOCKET"];
+        NSString *sessID = NSProcessInfo.processInfo.environment[@"FLOWS_WORKSPACE_SESSION"] ?: @"probe";
+        if (probeExe.length > 0 && sock.length > 0) {
+            [ctrl.window makeKeyAndOrderFront:nil];
+            BOOL attached = [ctrl attachSession:sessID executable:probeExe socketPath:sock nonce:nil];
+            assert(attached == YES);
+            assert(ctrl.window.firstResponder == ctrl.terminalView);
+            NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:8];
+            while (!(ctrl.terminalView.ready && ctrl.terminalView.inputOwner) && deadline.timeIntervalSinceNow > 0) {
+                [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+            }
+            assert(ctrl.terminalView.ready && ctrl.terminalView.inputOwner);
+            [ctrl.terminalView insertText:@"ws-input-ok\n" replacementRange:NSMakeRange(NSNotFound, 0)];
+            deadline = [NSDate dateWithTimeIntervalSinceNow:4];
+            while (![[ctrl.terminalView readScreenText] containsString:@"ws-input-ok"] && deadline.timeIntervalSinceNow > 0) {
+                [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+            }
+            assert([[ctrl.terminalView readScreenText] containsString:@"ws-input-ok"]);
+
+            // Resize workspace window and verify terminal view resizes cleanly.
+            [ctrl.window setContentSize:NSMakeSize(1040, 680)];
+            [ctrl.terminalView syncSize];
+            [ctrl.terminalView scrollLines:-3];
+            [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.15]];
+
+            // Detach via Cmd+W and reconnect to verify history persists.
+            assert([ctrl handleKeyEvent:cmdW] == YES);
+            assert(ctrl.dockOpen == NO);
+            assert(ctrl.terminalView.surface == NULL);
+
+            BOOL reattached = [ctrl attachSession:sessID executable:probeExe socketPath:sock nonce:nil];
+            assert(reattached == YES);
+            deadline = [NSDate dateWithTimeIntervalSinceNow:8];
+            while (!(ctrl.terminalView.ready && ctrl.terminalView.inputOwner &&
+                     [[ctrl.terminalView readScreenText] containsString:@"ws-input-ok"]) &&
+                   deadline.timeIntervalSinceNow > 0) {
+                [NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+            }
+            assert(ctrl.terminalView.ready && ctrl.terminalView.inputOwner);
+            assert([[ctrl.terminalView readScreenText] containsString:@"ws-input-ok"]);
+            [ctrl detachDock];
+        }
 
         printf("WorkspaceTests passed\n");
     }

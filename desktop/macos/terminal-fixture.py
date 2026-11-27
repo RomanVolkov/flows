@@ -14,7 +14,7 @@ def send(text):
 
 
 def run_scrollback(ready_path):
-    for i in range(1, 151):
+    for i in range(1, 301):
         send(f"\x1b[38;5;{(i % 6) + 1}mROW-{i:04d} scrollback fixture payload\r\n")
     send("LIVE-BOTTOM")
     with open(ready_path, "w") as ready:
