@@ -57,9 +57,14 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	go runs.WatchAdoptedHosts(ctx)
 	libraryWorker := newLibraryReconciler(home)
 	go libraryWorker.run(ctx)
+	if err := state.MarkUnfinishedRunsInterrupted(ctx); err != nil {
+		return fmt.Errorf("mark interrupted workflows: %w", err)
+	}
+	workflows := &workflowRunner{ctx: ctx, state: state, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
+	defer workflows.wg.Wait()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
-		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs, home, libraryWorker),
+		Handler:           handler(Version{Protocol: ProtocolVersion, Build: build}, stop, state, sessions, runs, home, libraryWorker, workflows),
 		ReadHeaderTimeout: 3 * time.Second,
 		ReadTimeout:       5 * time.Second,
 		IdleTimeout:       30 * time.Second,
@@ -119,7 +124,7 @@ func listen(path string) (*net.UnixListener, error) {
 	return listener, nil
 }
 
-func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager, home paths.Home, libraryWorker *libraryReconciler) http.Handler {
+func handler(version Version, shutdown context.CancelFunc, state *store.Store, sessions *SessionManager, runs *RunManager, home paths.Home, libraryWorker *libraryReconciler, workflows *workflowRunner) http.Handler {
 	var harnesses harnessCache
 	usageHandler := UsageHandler(state, home)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +132,7 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -165,6 +170,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			}
 		case "/v1/runs":
 			handleRuns(w, r, runs)
+		case "/v1/workflows", "/v1/workflows/run":
+			workflows.serveHTTP(w, r)
 		case "/v1/library":
 			handleLibrary(w, r, home, libraryWorker)
 		case "/v1/settings", "/v1/settings/validate":
@@ -190,7 +197,11 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 				for _, action := range []string{"stop", "remove", "resume"} {
 					if id, matched := strings.CutSuffix(nodeID, "/"+action); matched && id != "" {
 						if action == "stop" {
-							handleNodeStop(w, r, sessions, id)
+							if r.Method == http.MethodPost && workflows.cancelNode(id) {
+								writeJSON(w, http.StatusOK, map[string]string{"status": "stopping"})
+							} else {
+								handleNodeStop(w, r, sessions, id)
+							}
 						} else if action == "remove" {
 							handleNodeRemove(w, r, state, sessions, id)
 						} else {

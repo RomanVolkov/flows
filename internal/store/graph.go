@@ -30,6 +30,7 @@ type WaitReason struct {
 }
 
 type Node struct {
+	Detail    string      `json:"detail,omitempty"`
 	ID        string      `json:"id"`
 	RunID     string      `json:"run_id"`
 	ParentID  *string     `json:"parent_id,omitempty"`

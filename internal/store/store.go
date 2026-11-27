@@ -18,7 +18,7 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 type Store struct {
 	db *sql.DB
@@ -99,6 +99,18 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=3"); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		script, err := migrations.ReadFile("migrations/004_workflow_runs.sql")
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=4"); err != nil {
 			return err
 		}
 	}

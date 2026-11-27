@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -371,8 +372,14 @@ func matchesType(v any, typ string) bool {
 		_, ok := v.(bool)
 		return ok
 	case "integer":
-		_, ok := v.(int)
-		return ok
+		switch n := v.(type) {
+		case int:
+			return true
+		case float64:
+			return !math.IsInf(n, 0) && math.Trunc(n) == n
+		default:
+			return false
+		}
 	case "number":
 		switch v.(type) {
 		case int, float64:

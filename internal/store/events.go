@@ -62,6 +62,23 @@ func (s *Store) Snapshot(ctx context.Context) (Workspace, error) {
 	if err != nil {
 		return Workspace{}, err
 	}
+	unknown, err := collect(ctx, tx, "SELECT node_id FROM workflow_steps WHERE in_flight_unknown=1", func(row scanner) (string, error) {
+		var id string
+		err := row.Scan(&id)
+		return id, err
+	})
+	if err != nil {
+		return Workspace{}, err
+	}
+	unknownByID := make(map[string]bool, len(unknown))
+	for _, id := range unknown {
+		unknownByID[id] = true
+	}
+	for i := range view.Nodes {
+		if view.Nodes[i].Status == Interrupted && unknownByID[view.Nodes[i].ID] {
+			view.Nodes[i].Detail = workflowUnknownOutcome
+		}
+	}
 	view.Edges, err = collect(ctx, tx, `
 		SELECT id, run_id, from_id, to_id, milestone FROM edges ORDER BY run_id, id
 	`, func(row scanner) (Edge, error) {
