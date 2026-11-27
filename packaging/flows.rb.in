@@ -9,6 +9,7 @@ cask "flows" do
 
   depends_on arch: :arm64
   depends_on macos: ">= :sonoma"
+  depends_on formula: "go"
   container type: :naked
 
   installer script: {

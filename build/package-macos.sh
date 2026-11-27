@@ -22,6 +22,7 @@ if [ -f build/macos/AppIcon.icns ]; then
 fi
 if command -v plutil >/dev/null 2>&1; then
   plutil -replace CFBundleShortVersionString -string "${VERSION}" "${CONTENTS}/Info.plist"
+  plutil -replace CFBundleVersion -string "${VERSION}" "${CONTENTS}/Info.plist"
 fi
 
 # Build core binaries (CLI in Resources/bin/flows so it never collides with MacOS/Flows on case-insensitive APFS).

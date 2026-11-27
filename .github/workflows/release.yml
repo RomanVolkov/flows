@@ -43,6 +43,10 @@ jobs:
       - run: sh packaging/macos/package.sh
       - name: Exercise the user-domain installer
         run: |
+          if [ ! -x /opt/homebrew/bin/go ] && [ ! -x /usr/local/go/bin/go ] && [ ! -x /usr/local/bin/go ]; then
+            sudo mkdir -p /usr/local/bin
+            sudo ln -sf "$(command -v go)" /usr/local/bin/go
+          fi
           /usr/sbin/installer -pkg "build/dist/Flows-$VERSION-darwin-arm64.pkg" -target CurrentUserHomeDirectory
           "$HOME/.local/bin/flows" status
           "$HOME/.local/bin/flows" version | grep -F "$VERSION"
