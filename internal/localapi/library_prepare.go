@@ -31,7 +31,7 @@ type libraryReconciler struct {
 
 	mu       sync.RWMutex
 	index    library.IndexSnapshot
-	registry *catalog.Registry
+	prepared map[string]*workflow.LaunchSnapshot
 	tools    map[string]preparedTool
 	lastScan *library.IndexSnapshot
 
@@ -114,19 +114,30 @@ func (w *libraryReconciler) reconcile(ctx context.Context) {
 		tools[entry.ID] = result
 		setPreparation(entry, "tool_prepare_failed", result.err)
 	}
+	prepared := make(map[string]*workflow.LaunchSnapshot)
 	for i := range final.Entries {
 		entry := &final.Entries[i]
 		if entry.Kind != library.KindWorkflow {
 			continue
 		}
 		def, diags := workflow.ParseFile(filepath.Join(entry.Path, "workflow.yaml"))
-		if len(diags) == 0 {
-			_, diags = workflow.CompileWithLoader(def, reg, libraryWorkflowLoader(workflows))
-		}
-		entry.Status = "ready"
+		loader := libraryWorkflowLoader(workflows)
 		if len(diags) > 0 {
-			entry.Status = "invalid"
-			entry.Diagnostics = diags
+			entry.Status, entry.Diagnostics = "invalid", diags
+			continue
+		}
+		compiled, diags := workflow.CompileWithLoader(def, reg, loader)
+		if len(diags) > 0 {
+			entry.Status, entry.Diagnostics = "invalid", diags
+			continue
+		}
+		snapshot, err := workflow.CreateSnapshotWithLoader(entry.Path, compiled, reg, loader)
+		if err == nil {
+			err = pinWorkflowTools(snapshot, reg, tools, w)
+		}
+		setPreparation(entry, "workflow_prepare_failed", err)
+		if err == nil {
+			prepared[entry.ID] = snapshot
 		}
 	}
 
@@ -142,7 +153,7 @@ func (w *libraryReconciler) reconcile(ctx context.Context) {
 		return
 	}
 	w.mu.Lock()
-	w.index, w.registry, w.tools = final, reg, tools
+	w.index, w.prepared, w.tools = final, prepared, tools
 	w.lastScan = scan
 	w.mu.Unlock()
 }

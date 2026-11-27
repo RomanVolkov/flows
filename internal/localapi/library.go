@@ -45,7 +45,11 @@ func handleLibrary(w http.ResponseWriter, r *http.Request, home paths.Home, work
 			writeError(w, http.StatusBadRequest, "invalid_body", "invalid validation request")
 			return
 		}
-		writeJSON(w, http.StatusOK, library.Validate(home, req.Directory))
+		report := library.Validate(home, req.Directory)
+		writeJSON(w, http.StatusOK, struct {
+			library.ValidationReport
+			Importable bool `json:"importable"`
+		}{report, canImportPackage(report)})
 	case "/v1/library/import":
 		if !method(w, r, http.MethodPost) {
 			return

@@ -319,6 +319,9 @@ func collectPackageFiles(root string) ([]string, string, error) {
 		}
 		lowerSeen[low] = rel
 		if !d.IsDir() {
+			if !d.Type().IsRegular() {
+				return fmt.Errorf("package contains a nonregular file: %s", rel)
+			}
 			files = append(files, rel)
 		}
 		return nil

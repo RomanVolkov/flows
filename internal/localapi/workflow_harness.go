@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/romanvolkov/flows/desktop/theme"
@@ -139,7 +140,11 @@ func (r *workflowRunner) executeHarness(ctx context.Context, spec store.NewWorkf
 		callbackEnv["FLOWS_ATTEMPT_ID"] = attempt.ID
 		callbackEnv["FLOWS_ATTEMPT_TOKEN"] = scope.token
 		callbackEnv["FLOWS_WORKFLOW_SOCKET"] = r.library.home.Socket()
-		prompt += "\n\nSubmit the final result as a JSON object using `flows bridge result <file>` or pipe it to `flows bridge result -`. The result schema is:\n" + string(schema)
+		command := workflowCLIPath()
+		if command != "flows" {
+			command = "'" + strings.ReplaceAll(command, "'", "'\"'\"'") + "'"
+		}
+		prompt += "\n\nSubmit the final result as a JSON object using `" + command + " bridge result <file>` or pipe it to `" + command + " bridge result -`. The result schema is:\n" + string(schema)
 		r.mu.Lock()
 		if r.results == nil {
 			r.results = make(map[string]*harnessResultScope)

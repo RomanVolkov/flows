@@ -28,6 +28,7 @@ CREATE TABLE workflow_steps (
     pinned_cache_key TEXT NOT NULL DEFAULT '',
     pinned_binary_digest TEXT NOT NULL DEFAULT '',
     invocation_id TEXT NOT NULL,
+    error TEXT NOT NULL DEFAULT '',
     in_flight_unknown INTEGER NOT NULL DEFAULT 0 CHECK (in_flight_unknown IN (0, 1)),
     outputs_json TEXT CHECK (json_valid(outputs_json)),
     milestones_json TEXT CHECK (json_valid(milestones_json)),

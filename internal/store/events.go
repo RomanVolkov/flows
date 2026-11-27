@@ -62,21 +62,30 @@ func (s *Store) Snapshot(ctx context.Context) (Workspace, error) {
 	if err != nil {
 		return Workspace{}, err
 	}
-	unknown, err := collect(ctx, tx, "SELECT node_id FROM workflow_steps WHERE in_flight_unknown=1", func(row scanner) (string, error) {
-		var id string
-		err := row.Scan(&id)
-		return id, err
-	})
+	type nodeDetail struct {
+		id, message string
+		unknown     bool
+	}
+	details, err := collect(ctx, tx, `SELECT root_node_id,error,0 FROM workflow_runs WHERE error<>''
+		UNION ALL SELECT node_id,error,in_flight_unknown FROM workflow_steps WHERE error<>'' OR in_flight_unknown=1`,
+		func(row scanner) (nodeDetail, error) {
+			var detail nodeDetail
+			err := row.Scan(&detail.id, &detail.message, &detail.unknown)
+			return detail, err
+		})
 	if err != nil {
 		return Workspace{}, err
 	}
-	unknownByID := make(map[string]bool, len(unknown))
-	for _, id := range unknown {
-		unknownByID[id] = true
+	byID := make(map[string]nodeDetail, len(details))
+	for _, detail := range details {
+		byID[detail.id] = detail
 	}
 	for i := range view.Nodes {
-		if view.Nodes[i].Status == Interrupted && unknownByID[view.Nodes[i].ID] {
-			view.Nodes[i].Detail = workflowUnknownOutcome
+		node := &view.Nodes[i]
+		detail := byID[node.ID]
+		node.Detail = detail.message
+		if node.Status == Interrupted && detail.unknown {
+			node.Detail = workflowUnknownOutcome
 		}
 	}
 	view.Edges, err = collect(ctx, tx, `

@@ -275,3 +275,31 @@ test('answers a pending workflow approval from the Canvas inspector', async ({ p
   const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'answerQuestion')?.args[0])
   expect(JSON.parse(String(body))).toEqual({ id: 'question', answer: 'approve' })
 })
+
+test('allows import while a workflow dependency is missing', async ({ page, launch }) => {
+  await launch()
+  await page.evaluate(() => {
+    const app = window.go.main.App
+    const request = app.Request
+    app.Request = async (action, payload) => {
+      if (action === 'validatePackage') return JSON.stringify({ id: 'needs-tool', kind: 'workflow',
+        valid: false, importable: true, diagnostics: [{ file: 'workflow.yaml', line: 4, column: 3, message: 'Tool is missing' }] })
+      if (action === 'previewPackage') return JSON.stringify({ version: '1.0.0', status: 'new' })
+      if (action === 'importPackage') {
+        window.mockDesktop.calls.push({ action, args: [payload] })
+        return '{}'
+      }
+      return request(action, payload)
+    }
+  })
+  await page.getByRole('button', { name: /New session/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'New session' })
+  await dialog.getByLabel('Scenario').selectOption('package')
+  await dialog.getByLabel('Package directory').fill('/fixtures/workflow')
+  await dialog.getByRole('button', { name: 'Validate', exact: true }).click()
+  await expect(dialog.getByText('Tool is missing')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+  await expect(dialog).toHaveCount(0)
+  const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'importPackage')?.args[0])
+  expect(JSON.parse(String(body))).toEqual({ directory: '/fixtures/workflow' })
+})

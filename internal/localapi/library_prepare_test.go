@@ -141,3 +141,26 @@ func libraryTestHome(t *testing.T) paths.Home {
 	}
 	return home
 }
+
+func TestLibraryReconcilerChecksPromptAssetsBeforeListing(t *testing.T) {
+	home := libraryTestHome(t)
+	dir := filepath.Join(home.Workflows(), "prompt-test")
+	writePackageFile(t, dir, "workflow.yaml", `schema: flows/v1
+id: prompt-test
+version: 1.0.0
+nodes:
+  agent:
+    uses: core.harness
+    with: {prompt_template: prompt.md}
+`)
+	reconciler := newLibraryReconciler(home)
+	reconciler.reconcile(t.Context())
+	if got := packageStatus(reconciler, "prompt-test"); got != "invalid" {
+		t.Fatalf("workflow with missing template was listed as %q", got)
+	}
+	writePackageFile(t, dir, "prompt.md", "Review the change.")
+	reconciler.reconcile(t.Context())
+	if got := packageStatus(reconciler, "prompt-test"); got != "ready" {
+		t.Fatalf("workflow with repaired template was listed as %q", got)
+	}
+}

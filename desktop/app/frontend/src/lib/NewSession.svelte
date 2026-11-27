@@ -17,7 +17,7 @@
  let workflowFetch=0
  const selectedWorkflow=$derived(workflows.find(w=>w.id===workflowID))
  let harnessesLoading=$state(true)
- let review=$state<{id:string;version:string;kind:string;status:string;valid:boolean;diagnostics:{file:string;line:number;column:number;message:string;severity:string}[]}>()
+ let review=$state<{id:string;version:string;kind:string;status:string;valid:boolean;importable?:boolean;diagnostics:{file:string;line:number;column:number;message:string;severity:string}[]}>()
  let harnesses=$state<{id:string;version:string}[]>([])
  const harnessCacheKey='flows.available-harnesses.v1'
  let folder=$state<HTMLInputElement>()
@@ -118,9 +118,9 @@
     started(result.node_id)
    }else{
     const body=JSON.stringify({directory:repo.trim()})
-    if(!review||!review.valid){
-     const validation=await request<{valid:boolean;kind:string;id:string;diagnostics:{file:string;line:number;column:number;message:string;severity:string}[]}>('validatePackage',body)
-     if(!validation.valid){review={...validation,version:'',status:'invalid'};return}
+    if(!review||!(review.importable??review.valid)){
+     const validation=await request<{valid:boolean;importable?:boolean;kind:string;id:string;diagnostics:{file:string;line:number;column:number;message:string;severity:string}[]}>('validatePackage',body)
+     if(!(validation.importable??validation.valid)){review={...validation,version:'',status:'invalid'};return}
      const preview=await request<{version:string;status:string}>('previewPackage',body)
      review={...validation,...preview};return
     }
@@ -185,12 +185,12 @@
    <label for="repo">Package directory</label>
    <input id="repo" bind:this={folder} bind:value={repo} list="repos" placeholder="Directory containing workflow.yaml or tool.yaml" oninput={()=>review=undefined}/>
    <datalist id="repos">{#each history as path}<option value={path}></option>{/each}</datalist>
-   {#if review}<p class:valid={review.valid} class:invalid={!review.valid} class="hint">{review.valid?'Valid':'Needs fixes'} · {review.kind} · {review.id}{#if review.version} · {review.version} · {review.status}{/if}</p>
+   {#if review}<p class:valid={review.valid} class:invalid={!review.valid} class="hint">{review.valid?'Valid':review.importable?'Dependencies pending':'Needs fixes'} · {review.kind} · {review.id}{#if review.version} · {review.version} · {review.status}{/if}</p>
    {#if review.diagnostics?.length}<ul class="diagnostics">{#each review.diagnostics as diagnostic}<li><code>{diagnostic.file}:{diagnostic.line}:{diagnostic.column}</code> {diagnostic.message}</li>{/each}</ul>{/if}{/if}
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}
   <div class="buttons"><small>⌘↩ submits · esc cancels</small><button type="button" onclick={close}>Cancel</button>
-   <button class="primary" disabled={busy||!ready||(scenario==='workflow'&&!selectedWorkflow)||((scenario==='session'||scenario==='authoring')&&(!harnesses.length||!harnesses.some(x=>x.id===agent)))||(scenario==='authoring'&&!idea.trim())||(scenario==='package'&&!repo.trim())}>{busy?'Working…':scenario==='package'?review?.valid?'Import':'Validate':'Create'}</button></div>
+   <button class="primary" disabled={busy||!ready||(scenario==='workflow'&&!selectedWorkflow)||((scenario==='session'||scenario==='authoring')&&(!harnesses.length||!harnesses.some(x=>x.id===agent)))||(scenario==='authoring'&&!idea.trim())||(scenario==='package'&&!repo.trim())}>{busy?'Working…':scenario==='package'?(review?.importable??review?.valid)?'Import':'Validate':'Create'}</button></div>
  </form>
 </div>
 <style>

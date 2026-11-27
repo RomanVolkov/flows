@@ -215,12 +215,13 @@ func (s *Store) FinishWorkflowNode(ctx context.Context, nodeID string, status St
 		if err := tx.updateNode(ctx, &node, status, nil); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE workflow_steps SET outputs_json=?,in_flight_unknown=0,updated_at=? WHERE node_id=?", string(data), tx.now, nodeID); err != nil {
+		if _, err := tx.ExecContext(ctx, "UPDATE workflow_steps SET outputs_json=?,error=?,in_flight_unknown=0,updated_at=? WHERE node_id=?", string(data), message, tx.now, nodeID); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE workflow_runs SET outputs_json=?,status=?,error=?,updated_at=? WHERE root_node_id=?", string(data), status, message, tx.now, nodeID); err != nil {
 			return err
 		}
+		node.Detail = message
 		return tx.event(ctx, node.RunID, &node.ID, node.AttemptID, "node_status_changed", node)
 	})
 }

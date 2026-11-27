@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path/filepath"
 
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/workflow"
@@ -32,6 +31,7 @@ func (r *workflowRunner) serveHTTP(w http.ResponseWriter, req *http.Request) {
 		r.library.trigger()
 		r.library.mu.RLock()
 		entries := r.library.index.Entries
+		prepared := r.library.prepared
 		preparing := r.library.lastScan == nil
 		r.library.mu.RUnlock()
 		workflows := make([]workflowSummary, 0)
@@ -40,9 +40,8 @@ func (r *workflowRunner) serveHTTP(w http.ResponseWriter, req *http.Request) {
 			if entry.Kind != library.KindWorkflow || entry.Status != "ready" {
 				continue
 			}
-			def, diagnostics := workflow.ParseFile(filepath.Join(entry.Path, "workflow.yaml"))
-			if len(diagnostics) == 0 {
-				workflows = append(workflows, workflowSummary{entry, workflow.NewWorkflowForm(def, "")})
+			if snapshot := prepared[entry.ID]; snapshot != nil {
+				workflows = append(workflows, workflowSummary{entry, workflow.NewWorkflowForm(snapshot.Compiled.Definition, "")})
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"workflows": workflows, "preparing": preparing})

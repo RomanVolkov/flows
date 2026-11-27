@@ -43,7 +43,7 @@ type workflowRunner struct {
 func (r *workflowRunner) prepareLaunch(req workflowLaunchRequest) (store.NewWorkflowRun, *workflow.LaunchSnapshot, error) {
 	w := r.library
 	w.mu.RLock()
-	reg, tools := w.registry, w.tools
+	snapshot, tools := w.prepared[req.WorkflowID], w.tools
 	index := w.index
 	w.mu.RUnlock()
 	entries := make(map[string]library.IndexEntry)
@@ -53,14 +53,10 @@ func (r *workflowRunner) prepareLaunch(req workflowLaunchRequest) (store.NewWork
 		}
 	}
 	entry, found := entries[req.WorkflowID]
-	if !found || reg == nil || entry.Digest != req.ExpectedDigest || !currentPackage(w, entry) {
+	if !found || snapshot == nil || entry.Digest != req.ExpectedDigest || !snapshotRevisionsCurrent(w, snapshot, entry, entries, tools, map[string]bool{}) {
 		return store.NewWorkflowRun{}, nil, errStaleWorkflow
 	}
-	loader := libraryWorkflowLoader(entries)
-	def, diags := workflow.ParseFile(filepath.Join(entry.Path, "workflow.yaml"))
-	if len(diags) > 0 {
-		return store.NewWorkflowRun{}, nil, diags[0]
-	}
+	def := snapshot.Compiled.Definition
 	inputs, err := workflow.ResolveInputs(def, req.Inputs)
 	if err != nil {
 		return store.NewWorkflowRun{}, nil, err
@@ -69,17 +65,6 @@ func (r *workflowRunner) prepareLaunch(req workflowLaunchRequest) (store.NewWork
 		if _, known := def.Inputs[name]; !known {
 			return store.NewWorkflowRun{}, nil, fmt.Errorf("unknown input %q", name)
 		}
-	}
-	cw, diags := workflow.CompileWithLoader(def, reg, loader)
-	if len(diags) > 0 {
-		return store.NewWorkflowRun{}, nil, diags[0]
-	}
-	snapshot, err := workflow.CreateSnapshotWithLoader(entry.Path, cw, reg, loader)
-	if err != nil {
-		return store.NewWorkflowRun{}, nil, err
-	}
-	if err := pinWorkflowTools(snapshot, reg, tools, w); err != nil {
-		return store.NewWorkflowRun{}, nil, err
 	}
 	data, err := json.Marshal(snapshot)
 	if err != nil {
@@ -96,6 +81,11 @@ func (r *workflowRunner) prepareLaunch(req workflowLaunchRequest) (store.NewWork
 			return store.NewWorkflowRun{}, nil, err
 		}
 		dir = settings.DefaultDirectory
+	}
+	if dir == "~" {
+		dir = w.home.Environment()["HOME"]
+	} else if tail, ok := strings.CutPrefix(dir, "~/"); ok {
+		dir = filepath.Join(w.home.Environment()["HOME"], tail)
 	}
 	if dir != "" {
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() || !filepath.IsAbs(dir) {
@@ -181,6 +171,39 @@ func graphEdges(snapshot *workflow.LaunchSnapshot) []store.WorkflowEdge {
 		}
 	}
 	return edges
+}
+
+func snapshotRevisionsCurrent(worker *libraryReconciler, snapshot *workflow.LaunchSnapshot, owner library.IndexEntry,
+	entries map[string]library.IndexEntry, tools map[string]preparedTool, checked map[string]bool) bool {
+	check := func(entry library.IndexEntry) bool {
+		if !checked[entry.Path] {
+			checked[entry.Path] = currentPackage(worker, entry)
+		}
+		return checked[entry.Path]
+	}
+	if !check(owner) {
+		return false
+	}
+	for _, pin := range snapshot.ToolBuilds {
+		tool, ok := tools[pin.ToolID]
+		if !ok || !check(tool.entry) {
+			return false
+		}
+	}
+	for _, child := range snapshot.ChildSnapshots {
+		childOwner := owner
+		for _, entry := range entries {
+			relative, err := filepath.Rel(entry.Path, child.Compiled.Definition.File)
+			if err == nil && filepath.IsLocal(relative) {
+				childOwner = entry
+				break
+			}
+		}
+		if !snapshotRevisionsCurrent(worker, child, childOwner, entries, tools, checked) {
+			return false
+		}
+	}
+	return true
 }
 
 func currentPackage(w *libraryReconciler, entry library.IndexEntry) bool {
@@ -310,6 +333,9 @@ func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.Workf
 	}
 	if node.Uses == "core.command" {
 		command, _ := with["command"].(string)
+		if command == "flows" {
+			command = workflowCLIPath()
+		}
 		args := make([]string, 0)
 		if value, set := with["args"]; set {
 			items, ok := value.([]any)
@@ -327,7 +353,18 @@ func (r *workflowRunner) invokeWorkflowStep(ctx context.Context, run store.Workf
 		if dir == "" {
 			dir, _ = with["working_dir"].(string)
 		}
-		result, err := builtin.RunCommand(ctx, builtin.CommandSpec{Executable: command, Args: args, WorkDir: dir})
+		if dir == "" {
+			dir, _ = with["cwd"].(string)
+		}
+		var timeout time.Duration
+		if with["timeout"] != nil {
+			var err error
+			timeout, err = positiveDuration(with["timeout"], "command timeout")
+			if err != nil {
+				return nil, err
+			}
+		}
+		result, err := builtin.RunCommand(ctx, builtin.CommandSpec{Executable: command, Args: args, WorkDir: dir, Timeout: timeout})
 		out := map[string]any{"exit_code": result.ExitCode, "stdout": result.Stdout, "stderr": result.Stderr}
 		return out, err
 	}
@@ -365,4 +402,15 @@ func (r *workflowRunner) invokePinnedPlugin(ctx context.Context, run store.Workf
 			return r.state.RecordWorkflowMilestone(ctx, step.NodeID, attempt.ID, name)
 		},
 	})
+}
+
+// Prefer the CLI shipped next to the installed daemon before using PATH.
+func workflowCLIPath() string {
+	if executable, err := os.Executable(); err == nil {
+		cli := filepath.Join(filepath.Dir(executable), "..", "Resources", "bin", "flows")
+		if info, err := os.Stat(cli); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return cli
+		}
+	}
+	return "flows"
 }

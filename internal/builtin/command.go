@@ -67,6 +67,9 @@ func RunCommand(ctx context.Context, spec CommandSpec) (CommandResult, error) {
 		return CommandResult{}, err
 	}
 
+	if err := ctx.Err(); err != nil {
+		return CommandResult{}, err
+	}
 	if err := cmd.Start(); err != nil {
 		return CommandResult{}, err
 	}
@@ -78,17 +81,27 @@ func RunCommand(ctx context.Context, spec CommandSpec) (CommandResult, error) {
 
 	var stdoutBuf, stderrBuf bytes.Buffer
 	var wg sync.WaitGroup
+	streamErrors := make(chan error, 2)
 	readStream := func(name string, r io.Reader, dst *bytes.Buffer) {
 		defer wg.Done()
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 0, 16*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
+			if dst.Len()+len(line)+1 > 4*1024*1024 {
+				streamErrors <- fmt.Errorf("%s exceeds the 4 MiB output limit", name)
+				_, _ = io.Copy(io.Discard, r)
+				return
+			}
 			dst.WriteString(line)
 			dst.WriteByte('\n')
 			if spec.OnOutput != nil {
 				spec.OnOutput(name, line)
 			}
+		}
+		if err := sc.Err(); err != nil {
+			streamErrors <- fmt.Errorf("read %s: %w", name, err)
+			_, _ = io.Copy(io.Discard, r)
 		}
 	}
 
@@ -98,6 +111,10 @@ func RunCommand(ctx context.Context, spec CommandSpec) (CommandResult, error) {
 	wg.Wait()
 
 	waitErr := cmd.Wait()
+	close(streamErrors)
+	for outputErr := range streamErrors {
+		waitErr = errors.Join(waitErr, outputErr)
+	}
 	res := CommandResult{
 		Stdout: stdoutBuf.String(),
 		Stderr: stderrBuf.String(),
