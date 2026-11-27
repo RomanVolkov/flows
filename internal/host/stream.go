@@ -713,34 +713,14 @@ syncTerminal:
 
 	var pendingInput []byte
 	if nativeMode && term.IsTerminal(int(ttyIn.Fd())) {
-		// Wait for the local Ghostty surface to parse all replayed bytes before emitting ready/scroll.
-		if _, err := ttyOut.Write([]byte("\x1b[5n")); err != nil {
+		var ok bool
+		pendingInput, ok, err = syncTerminalDSR(relayCtx, ttyOut, ttyReads, ttyErr)
+		if err != nil {
 			return err
 		}
-		var dsrBuf []byte
-		timer := time.NewTimer(500 * time.Millisecond)
-		for {
-			select {
-			case chunk := <-ttyReads:
-				dsrBuf = append(dsrBuf, chunk...)
-				if idx := bytes.Index(dsrBuf, []byte("\x1b[0n")); idx >= 0 {
-					pendingInput = append(pendingInput, dsrBuf[:idx]...)
-					pendingInput = append(pendingInput, dsrBuf[idx+4:]...)
-					goto ready
-				}
-			case <-timer.C:
-				pendingInput = append(pendingInput, dsrBuf...)
-				goto ready
-			case <-ttyErr:
-				timer.Stop()
-				return nil
-			case <-relayCtx.Done():
-				timer.Stop()
-				return nil
-			}
+		if !ok {
+			return nil
 		}
-	ready:
-		timer.Stop()
 	}
 
 	var isOwner atomic.Bool
@@ -784,27 +764,7 @@ syncTerminal:
 
 	var detached atomic.Bool
 	if ctlConn != nil {
-		go func() {
-			scanner := bufio.NewScanner(ctlConn)
-			for scanner.Scan() {
-				var cmd nativeControlCommand
-				if json.Unmarshal(scanner.Bytes(), &cmd) != nil {
-					continue
-				}
-				switch cmd.Type {
-				case "claim_input":
-					_ = client.SendControl(relayCtx, ControlMessage{Type: "claim_input"})
-				case "scroll_offset":
-					_ = client.SendControl(relayCtx, ControlMessage{Type: "scroll_offset", Rows: cmd.Rows})
-					case "detach":
-					detached.Store(true)
-					relayCancel()
-					return
-				}
-			}
-			detached.Store(true)
-			relayCancel()
-		}()
+		go runNativeControlReader(relayCtx, ctlConn, client, &detached, relayCancel)
 	}
 
 	done := make(chan struct{})
@@ -882,4 +842,54 @@ syncTerminal:
 			return nil
 		}
 	}
+}
+
+// syncTerminalDSR waits for the local Ghostty surface to acknowledge all replayed VT bytes via DSR.
+func syncTerminalDSR(ctx context.Context, ttyOut *os.File, ttyReads <-chan []byte, ttyErr <-chan error) ([]byte, bool, error) {
+	if _, err := ttyOut.Write([]byte("\x1b[5n")); err != nil {
+		return nil, false, err
+	}
+	var dsrBuf []byte
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+	for {
+		select {
+		case chunk := <-ttyReads:
+			dsrBuf = append(dsrBuf, chunk...)
+			if idx := bytes.Index(dsrBuf, []byte("\x1b[0n")); idx >= 0 {
+				rest := make([]byte, 0, len(dsrBuf)-4)
+				rest = append(rest, dsrBuf[:idx]...)
+				rest = append(rest, dsrBuf[idx+4:]...)
+				return rest, true, nil
+			}
+		case <-timer.C:
+			return dsrBuf, true, nil
+		case <-ttyErr:
+			return nil, false, nil
+		case <-ctx.Done():
+			return nil, false, nil
+		}
+	}
+}
+
+func runNativeControlReader(ctx context.Context, ctlConn net.Conn, client *AttachConn, detached *atomic.Bool, cancel context.CancelFunc) {
+	scanner := bufio.NewScanner(ctlConn)
+	for scanner.Scan() {
+		var cmd nativeControlCommand
+		if json.Unmarshal(scanner.Bytes(), &cmd) != nil {
+			continue
+		}
+		switch cmd.Type {
+		case "claim_input":
+			_ = client.SendControl(ctx, ControlMessage{Type: "claim_input"})
+		case "scroll_offset":
+			_ = client.SendControl(ctx, ControlMessage{Type: "scroll_offset", Rows: cmd.Rows})
+		case "detach":
+			detached.Store(true)
+			cancel()
+			return
+		}
+	}
+	detached.Store(true)
+	cancel()
 }
