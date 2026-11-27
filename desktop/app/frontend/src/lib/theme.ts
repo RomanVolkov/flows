@@ -53,6 +53,7 @@ export function vars(t: Theme): Record<string, string> {
     '--bg': rgba(bg, t.background_opacity),
     '--bg-solid': bg,
     '--elevated': rgba(mix(bg, fg, 0.035), Math.min(1, t.background_opacity + 0.04)),
+    '--elevated-solid': mix(bg, fg, 0.035),
     '--surface': mix(bg, fg, 0.06),
     '--hover': mix(bg, fg, 0.09),
     '--border': mix(bg, fg, 0.16),

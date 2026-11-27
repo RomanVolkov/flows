@@ -72,7 +72,7 @@
   .scrim { position: fixed; inset: 0; z-index: 29; height: auto; padding: 0; border: none; background: transparent; backdrop-filter: none; cursor: default; }
   .scrim:hover { background: transparent; }
   .pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 340px; padding: 12px;
-    background: var(--elevated); border: 1px solid var(--border); border-radius: var(--radius); }
+    background: var(--elevated-solid); border: 1px solid var(--border); border-radius: var(--radius); }
   .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
   .tabs button { height: 26px; padding: 0 10px; flex: 1; justify-content: center; }
   .tabs button.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }

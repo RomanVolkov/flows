@@ -161,7 +161,7 @@
             {#if hover !== undefined}
               <line class="cross" x1={x(hover)} x2={x(hover)} y1={m.t} y2={m.t + ph} />
               {#each lines as s}
-                <circle cx={x(hover)} cy={y(s.values[hover])} r="4" fill={s.color} stroke="var(--elevated)" stroke-width="2" />
+                <circle cx={x(hover)} cy={y(s.values[hover])} r="4" fill={s.color} stroke="var(--elevated-solid)" stroke-width="2" />
               {/each}
             {/if}
             <rect class="hit" x={m.l - 8} y={m.t} width={pw + 16} height={ph} role="presentation"
@@ -186,8 +186,8 @@
 
 <style>
   .overlay { position: fixed; inset: 0; z-index: 40; display: flex; align-items: flex-start; justify-content: center; padding-top: 8vh;
-    background: color-mix(in srgb, var(--bg-solid) 55%, transparent); backdrop-filter: blur(6px); }
-  .panel { width: min(1040px, calc(100vw - 48px)); max-height: 84vh; overflow: auto; padding: 16px 18px; background: var(--elevated);
+    background: color-mix(in srgb, var(--bg-solid) 86%, transparent); backdrop-filter: blur(8px); }
+  .panel { width: min(1040px, calc(100vw - 48px)); max-height: 84vh; overflow: auto; padding: 16px 18px; background: var(--elevated-solid);
     border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; }
   header { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
   h2 { font: 600 15px var(--sans); }
@@ -221,6 +221,6 @@
   table { border-collapse: collapse; font-size: 12px; width: 100%; }
   th, td { text-align: right; padding: 3px 10px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
   th:first-child, td:first-child { text-align: left; }
-  th { color: var(--text-3); font-weight: 500; position: sticky; top: 0; background: var(--elevated); }
+  th { color: var(--text-3); font-weight: 500; position: sticky; top: 0; background: var(--elevated-solid); }
   td { color: var(--text-2); }
 </style>
