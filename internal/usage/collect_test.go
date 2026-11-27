@@ -26,10 +26,10 @@ func TestClaudeDedupCodexResetsAgyUnavailableAndAmbiguity(t *testing.T) {
 		{SessionID: "s2", AttemptID: "a2", RunID: "r2", NodeID: "n2", ConversationID: "conv-2", WorkDir: sharedDir, StartedAt: now - 1000, Coverage: usage.CoverageLive},
 	}
 
-	// 1. Claude JSONL with duplicate message ID (subagent + main) and model switch.
+	// 1. Claude JSONL with duplicate message ID (subagent + main / streaming update) and model switch.
 	claudePath := filepath.Join(t.TempDir(), "claude.jsonl")
 	claudeData := "" +
-		`{"sessionId":"conv-1","cwd":"/tmp/shared-repo","message":{"id":"m1","model":"claude-sonnet-4","usage":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":20,"output_tokens":30}}}` + "\n" +
+		`{"sessionId":"conv-1","cwd":"/tmp/shared-repo","message":{"id":"m1","model":"claude-sonnet-4","usage":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":20,"output_tokens":5}}}` + "\n" +
 		`{"sessionId":"conv-1","cwd":"/tmp/shared-repo","message":{"id":"m1","model":"claude-sonnet-4","usage":{"input_tokens":100,"cache_read_input_tokens":50,"cache_creation_input_tokens":20,"output_tokens":30}}}` + "\n" +
 		`{"sessionId":"conv-1","cwd":"/tmp/shared-repo","message":{"id":"m2","model":"claude-opus-4","usage":{"input_tokens":200,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":40}}}` + "\n"
 	if err := os.WriteFile(claudePath, []byte(claudeData), 0600); err != nil {
@@ -44,9 +44,10 @@ func TestClaudeDedupCodexResetsAgyUnavailableAndAmbiguity(t *testing.T) {
 	}
 
 	var claudeCount int
-	_ = st.DB().QueryRowContext(ctx, "SELECT COUNT(*) FROM usage_receipts WHERE provider='claude'").Scan(&claudeCount)
-	if claudeCount != 2 {
-		t.Fatalf("expected 2 deduplicated claude receipts, got %d", claudeCount)
+	var claudeOut int
+	_ = st.DB().QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(SUM(output_tokens),0) FROM usage_receipts WHERE provider='claude'").Scan(&claudeCount, &claudeOut)
+	if claudeCount != 2 || claudeOut != 70 {
+		t.Fatalf("expected 2 deduplicated claude receipts with output=70, got count=%d out=%d", claudeCount, claudeOut)
 	}
 
 	// 2. Codex JSONL: cumulative differencing + counter reset + ambiguous cwd when conversation ID empty.
@@ -69,7 +70,40 @@ func TestClaudeDedupCodexResetsAgyUnavailableAndAmbiguity(t *testing.T) {
 		t.Fatalf("unexpected codex sums: in=%d out=%d reason=%d ambig=%d", sumIn, sumOut, sumReason, ambigCount)
 	}
 
-	// 3. Agy missing token fields -> CoverageUnavailable.
+	// 3. Nested real Codex JSONL format (`session_meta`, `turn_context`, `event_msg`/`token_count`),
+	// including incremental append (`offset > 0`) retaining file-level session/cwd/model and `last_token_usage` context.
+	nestedCodexPath := filepath.Join(t.TempDir(), "nested-codex.jsonl")
+	nestedPart1 := "" +
+		`{"timestamp":"2026-11-27T10:19:36.895Z","type":"session_meta","payload":{"id":"conv-nested","cwd":"/tmp/shared-repo","timestamp":"2026-11-27T10:19:36.800Z"}}` + "\n" +
+		`{"timestamp":"2026-11-27T10:19:38.095Z","type":"turn_context","payload":{"cwd":"/tmp/shared-repo","model":"gpt-6.2-sol"}}` + "\n" +
+		`{"timestamp":"2026-11-27T10:19:39.842Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":200,"cached_input_tokens":50,"cache_write_input_tokens":0,"output_tokens":25,"reasoning_output_tokens":5},"last_token_usage":{"input_tokens":120},"model_context_window":272000}}}` + "\n"
+	if err := os.WriteFile(nestedCodexPath, []byte(nestedPart1), 0600); err != nil {
+		t.Fatal(err)
+	}
+	nestedBindings := []usage.SessionBinding{
+		{SessionID: "s3", AttemptID: "a3", RunID: "r3", NodeID: "n3", ConversationID: "conv-nested", WorkDir: sharedDir, StartedAt: now - int64(time.Hour), Coverage: usage.CoverageLive},
+	}
+	if n, err := usage.CollectCodexFile(ctx, st, nestedCodexPath, nestedBindings); err != nil || n != 1 {
+		t.Fatalf("expected 1 nested codex receipt, got %d (err=%v)", n, err)
+	}
+	nestedPart2 := nestedPart1 +
+		`{"timestamp":"2026-11-27T10:20:01.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":320,"cached_input_tokens":80,"cache_write_input_tokens":0,"output_tokens":55,"reasoning_output_tokens":15},"last_token_usage":{"input_tokens":180},"model_context_window":272000}}}` + "\n"
+	if err := os.WriteFile(nestedCodexPath, []byte(nestedPart2), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := usage.CollectCodexFile(ctx, st, nestedCodexPath, nestedBindings); err != nil || n != 1 {
+		t.Fatalf("expected 1 incremental nested codex receipt, got %d (err=%v)", n, err)
+	}
+	nestedSum, err := usage.Aggregate(ctx, st.DB(), usage.QueryFilter{SessionID: "s3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Total uncached: (200-50) + ((320-200)-(80-50)) = 150 + 90 = 240; cached=80; out=55; reason=15; context=180.
+	if nestedSum.UncachedInputTokens != 240 || nestedSum.CacheReadTokens != 80 || nestedSum.OutputTokens != 55 || nestedSum.ReasoningTokens != 15 || nestedSum.LatestContextTokens != 180 || len(nestedSum.ByModel) != 1 || nestedSum.ByModel[0].Key != "gpt-6.2-sol" {
+		t.Fatalf("unexpected nested codex aggregate: %+v", nestedSum)
+	}
+
+	// 4. Agy missing token fields -> CoverageUnavailable.
 	agyPath := filepath.Join(t.TempDir(), "agy.json")
 	_ = os.WriteFile(agyPath, []byte(`{"conversation_id":"conv-1","model":"gemini-3-pro"}`), 0600)
 	rcp, err := usage.CollectAgyFile(ctx, st, agyPath, candidates)

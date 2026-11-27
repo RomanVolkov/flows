@@ -10,6 +10,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/romanvolkov/flows/internal/store"
@@ -61,6 +64,115 @@ type SessionBinding struct {
 	Coverage       Coverage
 }
 
+const attributionSlack = int64(10 * time.Second)
+
+var notWord = regexp.MustCompile(`[^a-zA-Z0-9]`)
+
+func canonicalDir(p string) string {
+	if p == "" {
+		return ""
+	}
+	clean := filepath.Clean(p)
+	if realPath, err := filepath.EvalSymlinks(clean); err == nil {
+		return realPath
+	}
+	parent := filepath.Dir(clean)
+	if parent == clean {
+		return clean
+	}
+	return filepath.Join(canonicalDir(parent), filepath.Base(clean))
+}
+
+// FindConversationID scans local Codex or Claude transcripts under homeDir for
+// the newest conversation started in workDir near startedAt.
+func FindConversationID(homeDir, harnessKind, workDir string, startedAt int64) (string, bool) {
+	if homeDir == "" || workDir == "" {
+		return "", false
+	}
+	wantDir := canonicalDir(workDir)
+	from := startedAt - attributionSlack
+
+	switch harnessKind {
+	case "codex":
+		root := filepath.Join(homeDir, ".codex", "sessions")
+		var bestID string
+		var bestTime int64
+		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+				return nil
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				return nil
+			}
+			defer f.Close()
+			sc := bufio.NewScanner(f)
+			sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+			if !sc.Scan() {
+				return nil
+			}
+			var meta codexEnvelope
+			if json.Unmarshal(sc.Bytes(), &meta) != nil || meta.Type != "session_meta" || meta.Payload == nil {
+				return nil
+			}
+			if canonicalDir(meta.Payload.CWD) != wantDir {
+				return nil
+			}
+			ts := parseEventTime(meta.Payload.Timestamp)
+			if meta.Payload.Timestamp == "" {
+				ts = parseEventTime(meta.Timestamp)
+			}
+			if startedAt > 0 && ts < from {
+				return nil
+			}
+			id := meta.Payload.ID
+			if id == "" {
+				id = meta.Payload.SessionID
+			}
+			if id != "" && ts >= bestTime {
+				bestID = id
+				bestTime = ts
+			}
+			return nil
+		})
+		return bestID, bestID != ""
+	case "claude":
+		projects := filepath.Join(homeDir, ".claude", "projects")
+		var bestID string
+		var bestTime int64
+		for _, dir := range []string{filepath.Clean(workDir), wantDir} {
+			slug := notWord.ReplaceAllString(dir, "-")
+			files, _ := filepath.Glob(filepath.Join(projects, slug, "*.jsonl"))
+			for _, file := range files {
+				f, err := os.Open(file)
+				if err != nil {
+					continue
+				}
+				sc := bufio.NewScanner(f)
+				sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+				for sc.Scan() {
+					var e struct {
+						SessionID string `json:"sessionId"`
+						Timestamp string `json:"timestamp"`
+					}
+					if json.Unmarshal(sc.Bytes(), &e) == nil && e.SessionID != "" {
+						ts := parseEventTime(e.Timestamp)
+						if (startedAt == 0 || ts >= from) && ts >= bestTime {
+							bestID = e.SessionID
+							bestTime = ts
+						}
+						break
+					}
+				}
+				_ = f.Close()
+			}
+		}
+		return bestID, bestID != ""
+	default:
+		return "", false
+	}
+}
+
 // AttributeSession matches telemetry by exact conversationID first, falling back
 // to an unambiguous (cwd, eventTime) match only when exactly one session qualifies.
 func AttributeSession(convID, cwd string, eventTime int64, candidates []SessionBinding) (SessionBinding, bool, bool) {
@@ -71,9 +183,11 @@ func AttributeSession(convID, cwd string, eventTime int64, candidates []SessionB
 			}
 		}
 	}
+	normCWD := canonicalDir(cwd)
 	var matches []SessionBinding
 	for _, c := range candidates {
-		if cwd != "" && c.WorkDir == cwd && eventTime >= c.StartedAt && (c.EndedAt == 0 || eventTime <= c.EndedAt) {
+		if normCWD != "" && canonicalDir(c.WorkDir) == normCWD &&
+			eventTime >= c.StartedAt-attributionSlack && (c.EndedAt == 0 || eventTime <= c.EndedAt) {
 			matches = append(matches, c)
 		}
 	}
@@ -104,8 +218,9 @@ func CollectClaudeFile(ctx context.Context, st *store.Store, path string, candid
 	}
 
 	var receipts []Receipt
+	receiptIndex := make(map[string]int)
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	bytesRead := int64(0)
 
 	for sc.Scan() {
@@ -129,6 +244,10 @@ func CollectClaudeFile(ctx context.Context, st *store.Store, path string, candid
 		if json.Unmarshal(raw, &entry) != nil || entry.Message == nil || entry.Message.Usage == nil || entry.Message.ID == "" {
 			continue
 		}
+		model := entry.Message.Model
+		if strings.HasPrefix(model, "<") {
+			model = ""
+		}
 		evTime := parseEventTime(entry.Timestamp)
 		bound, ok, ambig := AttributeSession(entry.SessionID, entry.CWD, evTime, candidates)
 		cov := CoverageLive
@@ -136,10 +255,10 @@ func CollectClaudeFile(ctx context.Context, st *store.Store, path string, candid
 			cov = bound.Coverage
 		}
 		u := entry.Message.Usage
-		receipts = append(receipts, Receipt{
+		rcp := Receipt{
 			ID:               "rcp-" + newHex(8),
 			Provider:         "claude",
-			Model:            entry.Message.Model,
+			Model:            model,
 			ConversationID:   entry.SessionID,
 			SourceKey:        "msg:" + entry.Message.ID,
 			SessionID:        bound.SessionID,
@@ -154,7 +273,13 @@ func CollectClaudeFile(ctx context.Context, st *store.Store, path string, candid
 			ContextTokens:    u.InputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens,
 			Coverage:         cov,
 			Ambiguous:        ambig,
-		})
+		}
+		if idx, exists := receiptIndex[rcp.SourceKey]; exists {
+			receipts[idx] = rcp
+		} else {
+			receiptIndex[rcp.SourceKey] = len(receipts)
+			receipts = append(receipts, rcp)
+		}
 	}
 	if err := sc.Err(); err != nil {
 		return 0, err
@@ -173,13 +298,28 @@ func commitReceiptsAndOffset(ctx context.Context, st *store.Store, path string, 
 				r.EventTime = now
 			}
 			_, err := tx.ExecContext(ctx, `
-				INSERT OR IGNORE INTO usage_receipts(
+				INSERT INTO usage_receipts(
 					id, provider, model, conversation_id, source_key,
 					session_id, attempt_id, run_id, node_id, event_time,
 					input_tokens, cache_read_tokens, cache_write_tokens, output_tokens,
 					reasoning_tokens, context_tokens, context_window,
 					coverage, attributed_at_completion, ambiguous, created_at
 				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(provider, source_key) DO UPDATE SET
+					model = CASE WHEN excluded.model != '' THEN excluded.model ELSE usage_receipts.model END,
+					conversation_id = CASE WHEN excluded.conversation_id != '' THEN excluded.conversation_id ELSE usage_receipts.conversation_id END,
+					session_id = CASE WHEN usage_receipts.session_id != '' THEN usage_receipts.session_id ELSE excluded.session_id END,
+					attempt_id = CASE WHEN usage_receipts.attempt_id != '' THEN usage_receipts.attempt_id ELSE excluded.attempt_id END,
+					run_id = CASE WHEN usage_receipts.run_id != '' THEN usage_receipts.run_id ELSE excluded.run_id END,
+					node_id = CASE WHEN usage_receipts.node_id != '' THEN usage_receipts.node_id ELSE excluded.node_id END,
+					input_tokens = MAX(usage_receipts.input_tokens, excluded.input_tokens),
+					cache_read_tokens = MAX(usage_receipts.cache_read_tokens, excluded.cache_read_tokens),
+					cache_write_tokens = MAX(usage_receipts.cache_write_tokens, excluded.cache_write_tokens),
+					output_tokens = MAX(usage_receipts.output_tokens, excluded.output_tokens),
+					reasoning_tokens = MAX(usage_receipts.reasoning_tokens, excluded.reasoning_tokens),
+					context_tokens = MAX(usage_receipts.context_tokens, excluded.context_tokens),
+					context_window = MAX(usage_receipts.context_window, excluded.context_window),
+					coverage = CASE WHEN usage_receipts.coverage = 'final' THEN 'final' ELSE excluded.coverage END
 			`, r.ID, r.Provider, r.Model, r.ConversationID, r.SourceKey,
 				r.SessionID, r.AttemptID, r.RunID, r.NodeID, r.EventTime,
 				r.InputTokens, r.CacheReadTokens, r.CacheWriteTokens, r.OutputTokens,

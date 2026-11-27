@@ -99,6 +99,13 @@ func openNativeTerminal(a *App, id, socketPath, sessionID, nonce string, x, y, w
 	if err != nil {
 		return err
 	}
+	return openNativeTerminalWithExe(a, exe, id, socketPath, sessionID, nonce, x, y, width, height, fontSize)
+}
+
+func openNativeTerminalWithExe(a *App, exe, id, socketPath, sessionID, nonce string, x, y, width, height, fontSize float64) error {
+	if !nativeTerminalSupported() {
+		return ErrNativeTerminalUnavailable
+	}
 	nativeAppsMu.Lock()
 	nativeApps[id] = a
 	nativeAppsMu.Unlock()

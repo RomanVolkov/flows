@@ -34,7 +34,14 @@ static void runOnMainSync(dispatch_block_t block) {
 }
 
 static NSWindow *flowsTargetWindow(void) {
-    return NSApp.keyWindow ?: NSApp.mainWindow ?: NSApp.windows.firstObject;
+    if (NSApp.keyWindow.contentView) return NSApp.keyWindow;
+    if (NSApp.mainWindow.contentView) return NSApp.mainWindow;
+    for (NSWindow *w in NSApp.windows) {
+        if (w.isVisible && w.contentView && ![w isKindOfClass:NSPanel.class]) {
+            return w;
+        }
+    }
+    return NSApp.windows.firstObject;
 }
 
 static NSRect flowsContentFrame(NSView *contentView, double x, double y, double width, double height) {

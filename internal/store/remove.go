@@ -93,7 +93,6 @@ func (s *Store) RemoveSubtree(ctx context.Context, nodeID string) ([]string, err
 				"DELETE FROM sessions WHERE attempt_id IN (" + attemptMarks + ")",
 				"DELETE FROM activities WHERE attempt_id IN (" + attemptMarks + ")",
 				"DELETE FROM artifacts WHERE attempt_id IN (" + attemptMarks + ")",
-				"DELETE FROM usage_receipts WHERE attempt_id IN (" + attemptMarks + ")",
 			} {
 				if _, err := tx.ExecContext(ctx, query, attemptArgs...); err != nil {
 					return err
@@ -104,9 +103,6 @@ func (s *Store) RemoveSubtree(ctx context.Context, nodeID string) ([]string, err
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM edges WHERE from_id IN ("+idMarks+") OR to_id IN ("+idMarks+")", append(idArgs, idArgs...)...); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, "DELETE FROM usage_receipts WHERE node_id IN ("+idMarks+")", idArgs...); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE nodes SET active_attempt_id=NULL WHERE id IN ("+idMarks+")", idArgs...); err != nil {

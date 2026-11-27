@@ -20,6 +20,7 @@ import (
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/paths"
 	"github.com/romanvolkov/flows/internal/store"
+	"github.com/romanvolkov/flows/internal/usage"
 )
 
 // CreateRunRequest launches an empty or prompted session root idempotently.
@@ -416,16 +417,13 @@ func (m *RunManager) ResumeSession(ctx context.Context, nodeID string) (CreateRu
 	m.mu.Lock()
 	active := m.hosts[*node.AttemptID]
 	m.mu.Unlock()
-	var screen []byte
-	if active != nil {
-		screen = active.Preview()
-	} else {
-		screen, err = os.ReadFile(filepath.Join(m.home.State, "hosts", previous.SessionID, "snapshot.bin"))
-		if err != nil {
-			return CreateRunResponse{}, fmt.Errorf("read previous session screen: %w", err)
-		}
+	var startedAt int64
+	_ = m.store.DB().QueryRowContext(ctx, "SELECT started_at FROM node_attempts WHERE id=?", *node.AttemptID).Scan(&startedAt)
+
+	conversationID, ok, err := m.resolveResumeConversationID(adapter, previous, active, startedAt)
+	if err != nil {
+		return CreateRunResponse{}, err
 	}
-	conversationID, _, ok := adapter.ParseConversationRef(screen)
 	if !ok {
 		return CreateRunResponse{}, fmt.Errorf("could not find a %s conversation ID in the previous session screen", previous.Harness)
 	}
@@ -484,13 +482,68 @@ func (m *RunManager) ReconcileIntents(ctx context.Context) error {
 	return nil
 }
 
+func (m *RunManager) resolveResumeConversationID(adapter harness.Adapter, previous LaunchIntent, active *host.Host, startedAt int64) (string, bool, error) {
+	if active != nil {
+		if id, _, ok := adapter.ParseConversationRef(active.Preview()); ok {
+			return id, true, nil
+		}
+		return "", false, nil
+	}
+	snapPath := filepath.Join(m.home.State, "hosts", previous.SessionID, "snapshot.bin")
+	if screen, err := os.ReadFile(snapPath); err == nil {
+		if id, _, ok := adapter.ParseConversationRef(screen); ok {
+			return id, true, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", false, fmt.Errorf("read previous session screen: %w", err)
+	}
+
+	screenPath := filepath.Join(m.home.State, "hosts", previous.SessionID, "screen.json")
+	if rawFrame, err := os.ReadFile(screenPath); err == nil {
+		if id, _, ok := adapter.ParseConversationRef(extractScreenJSONText(rawFrame)); ok {
+			return id, true, nil
+		}
+	}
+
+	if id, ok := usage.FindConversationID(m.home.Environment()["HOME"], string(previous.Harness), previous.WorkDir, startedAt); ok {
+		return id, true, nil
+	}
+	return "", false, nil
+}
+
+func extractScreenJSONText(raw []byte) []byte {
+	var frame struct {
+		Lines []struct {
+			Cells []struct {
+				T string `json:"t"`
+			} `json:"cells"`
+		} `json:"lines"`
+	}
+	if json.Unmarshal(raw, &frame) != nil {
+		return nil
+	}
+	var out strings.Builder
+	for _, line := range frame.Lines {
+		for _, cell := range line.Cells {
+			out.WriteString(cell.T)
+		}
+		out.WriteByte('\n')
+	}
+	return []byte(out.String())
+}
+
 // CloseHosts shuts down all in-process hosts owned by RunManager.
 func (m *RunManager) CloseHosts() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	hosts := make([]*host.Host, 0, len(m.hosts))
 	for id, h := range m.hosts {
-		_ = h.Close()
+		hosts = append(hosts, h)
 		delete(m.hosts, id)
+	}
+	m.mu.Unlock()
+	for _, h := range hosts {
+		_ = h.RequestStop(500 * time.Millisecond)
+		_ = h.Close()
 	}
 }
 
