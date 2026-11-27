@@ -32,7 +32,7 @@
  const count=(kind:string)=>entries.filter(x=>x.kind===kind).length
 </script>
 <svelte:window onkeydown={key}/>
-<div class="settings"><button class="quiet gear" onclick={toggle} title="Settings" aria-label="Settings">⚙</button>
+<div class="settings"><button class="quiet gear" onclick={toggle} title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg></button>
 {#if open}<button class="scrim" aria-label="Close settings" onclick={close}></button><div class="pop" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
  <h3 class="label">Harnesses</h3><p class="hint">Available harnesses are detected from this machine.</p>
  {#if value}{#if available.length}<div class="tabs">{#each available as item}<button class:on={item.id===value.default_harness} disabled={busy} title={item.version} onclick={()=>selectHarness(item.id)}>{item.id}</button>{/each}</div>{:else}<p class="hint">No supported harnesses were found.</p>{/if}
@@ -46,7 +46,7 @@
 <style>
 
   .settings { position: relative; --wails-draggable: no-drag; }
-  .gear { font-size: 18px; line-height: 1; padding: 0 6px; }
+  .gear { width: 30px; padding: 0; justify-content: center; }
   .scrim { position: fixed; inset: 0; z-index: 29; height: auto; padding: 0; border: none; background: transparent; backdrop-filter: none; cursor: default; }
   .scrim:hover { background: transparent; }
   .pop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: 380px; padding: 12px;
