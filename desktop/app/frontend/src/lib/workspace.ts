@@ -22,6 +22,8 @@ export interface LibrarySnapshot {
 }
 export interface WorkflowField {
   name:string; type:string; required:boolean; default?:unknown
+  description?:string; placeholder?:string; enum?:unknown[]
+  control?:'toggle'|'segmented'|'select'|'folder'|'array'|'repos'|'number'|'multiline'|'text'
 }
 export interface WorkflowSummary {
   id:string; version:string; digest:string; path:string; origin:string

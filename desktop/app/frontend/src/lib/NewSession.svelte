@@ -1,6 +1,8 @@
 <script lang="ts">
  import {onMount,tick} from 'svelte'
- import {request, type WorkflowSummary, type WorkflowField, type RunWorkflowRequest, type RunWorkflowResponse} from './workspace'
+ import {request, type WorkflowSummary, type RunWorkflowRequest, type RunWorkflowResponse} from './workspace'
+ import WorkflowInputs from './WorkflowInputs.svelte'
+ import {coerceWorkflowInputs} from './workflow'
  import authoringPrompt from './prompts/create-flow.md?raw'
  let {started,close}:{started:(id:string)=>void;close:()=>void}=$props()
  let scenario=$state('session'), agent=$state('claude'), repo=$state(''), message=$state('')
@@ -9,6 +11,7 @@
  let workflows=$state<WorkflowSummary[]>([])
  let workflowID=$state('')
  let workflowInputs=$state<Record<string,unknown>>({})
+ let workflowErrors=$state<Record<string,string>>({})
  let workflowLoading=$state(false)
  let workflowTimer:ReturnType<typeof setTimeout>|undefined
  let workflowFetch=0
@@ -43,6 +46,7 @@
  function stopWorkflowRefresh(){workflowFetch++;clearTimeout(workflowTimer)}
  function selectWorkflow(id:string){
   workflowID=id
+  workflowErrors={}
   workflowInputs=Object.fromEntries((workflows.find(w=>w.id===id)?.form.fields??[])
    .filter(field=>field.default!==undefined).map(field=>[field.name,field.default]))
  }
@@ -59,30 +63,6 @@
    if(result.preparing)workflowTimer=setTimeout(()=>void loadWorkflows(),400)
   }catch(e){if(seq===workflowFetch)error=String(e)}
   finally{if(seq===workflowFetch)workflowLoading=false}
- }
- function displayValue(field:WorkflowField){
-  const value=workflowInputs[field.name]
-  return typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'')
- }
- function collectInputs(fields:WorkflowField[]){
-  const inputs:Record<string,unknown>={}
-  for(const field of fields){
-   const value=workflowInputs[field.name]
-   if(value===undefined||value===''){
-    if(field.required&&field.default===undefined)throw Error(field.name+' is required')
-    continue
-   }
-   if(field.type==='number'||field.type==='integer'){
-    const number=Number(value)
-    if(!Number.isFinite(number)||(field.type==='integer'&&!Number.isInteger(number)))throw Error(field.name+' must be a '+field.type)
-    inputs[field.name]=number
-   }else if(field.type==='array'||field.type==='object'){
-    try{inputs[field.name]=typeof value==='string'?JSON.parse(value):value}catch{throw Error(field.name+' must contain a valid JSON '+field.type)}
-   }else{
-    inputs[field.name]=value
-   }
-  }
-  return inputs
  }
  function rememberRepo(){
   if(repo.trim()){
@@ -121,8 +101,11 @@
   try {
    if(scenario==='workflow'){
     if(!selectedWorkflow)return
+    const {inputs,errors}=coerceWorkflowInputs(selectedWorkflow.form.fields,workflowInputs)
+    workflowErrors=errors
+    if(Object.keys(errors).length)return
     const body:RunWorkflowRequest={request_id:id,workflow_id:selectedWorkflow.id,expected_digest:selectedWorkflow.digest,
-     work_dir:repo.trim()||undefined,inputs:collectInputs(selectedWorkflow.form.fields)}
+     work_dir:repo.trim()||undefined,inputs}
     try{
      const result=await request<RunWorkflowResponse>('runWorkflow',JSON.stringify(body))
      rememberRepo()
@@ -193,17 +176,8 @@
     {/each}
    </select>
    {#if selectedWorkflow}
-    {#each selectedWorkflow.form.fields as field (field.name)}
-     <label for={'workflow-input-'+field.name}>{field.name}{field.required?' *':''}</label>
-     {#if field.type==='boolean'}
-      <select id={'workflow-input-'+field.name} value={displayValue(field)} onchange={e=>workflowInputs[field.name]=e.currentTarget.value===''?undefined:e.currentTarget.value==='true'}>
-       <option value="">Select…</option><option value="true">Yes</option><option value="false">No</option>
-      </select>
-     {:else}
-      <input id={'workflow-input-'+field.name} type={field.type==='number'||field.type==='integer'?'number':'text'}
-       step={field.type==='number'?'any':undefined} value={displayValue(field)} oninput={e=>workflowInputs[field.name]=e.currentTarget.value}/>
-     {/if}
-    {/each}
+    <WorkflowInputs fields={selectedWorkflow.form.fields} values={workflowInputs} errors={workflowErrors} {history}
+     onchange={(name,value)=>{workflowInputs[name]=value;delete workflowErrors[name]}}/>
     <label for="repo">Working folder</label>
     <input id="repo" bind:value={repo} placeholder="Optional working folder"/>
    {/if}

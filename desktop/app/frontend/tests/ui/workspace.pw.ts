@@ -142,7 +142,7 @@ test('launches a ready imported workflow with typed inputs', async ({ page, laun
   await expect(workflow.getByRole('option')).toHaveText(['Select a workflow', 'external-review · 1.0.0'])
   await workflow.selectOption('external-review')
   await dialog.getByLabel('limit').fill('7')
-  await dialog.getByLabel('drafts').selectOption('false')
+  await dialog.getByRole('group', { name: /drafts/ }).getByRole('button', { name: 'No' }).click()
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'runWorkflow')?.args[0])
@@ -173,7 +173,7 @@ test('refreshes the launcher when a selected workflow becomes stale', async ({ p
   const workflow = dialog.getByLabel('Workflow', { exact: true })
   await workflow.selectOption('external-review')
   await dialog.getByLabel('limit').fill('7')
-  await dialog.getByLabel('drafts').selectOption('true')
+  await dialog.getByRole('group', { name: /drafts/ }).getByRole('button', { name: 'Yes' }).click()
   await dialog.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(dialog.getByRole('alert')).toHaveText(/Workflow changed/)
   await expect(workflow.getByRole('option')).toHaveText(['No ready workflows'])
@@ -204,4 +204,44 @@ test('shows invalid packages in Settings and clears resolved diagnostics', async
   await expect(settings.getByText('broken-workflow')).toBeVisible()
   await expect(settings.getByText('Malformed workflow YAML')).toBeVisible()
   await expect(settings.getByRole('list', { name: 'Package preparation' })).toHaveCount(0)
+})
+
+test('renders adaptive workflow controls and reports missing required inputs', async ({ page, launch }) => {
+  await launch(running)
+  await page.evaluate(() => {
+    localStorage.setItem('flows.repos', JSON.stringify(['/recent']))
+    const app = window.go.main.App
+    const request = app.Request
+    app.Request = async (action, payload) => action === 'workflows' ? JSON.stringify({ preparing: false, workflows: [{
+      id: 'external-review', version: '1.0.0', digest: 'revision', form: { fields: [
+        { name: 'directory', type: 'string', required: true, control: 'folder' },
+        { name: 'provider', type: 'string', enum: ['github', 'gitlab'], control: 'segmented' },
+        { name: 'mode', type: 'string', enum: ['one', 'two'], control: 'select' },
+        { name: 'repositories', type: 'array', control: 'repos' },
+      ] },
+    }] }) : request(action, payload)
+  })
+  await page.getByRole('button', { name: /New session/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'New session' })
+  await dialog.getByLabel('Scenario').selectOption('workflow')
+  await dialog.getByLabel('Workflow', { exact: true }).selectOption('external-review')
+  const create = dialog.getByRole('button', { name: 'Create', exact: true })
+  await create.click()
+  await expect(dialog.getByRole('alert')).toHaveText('This field is required.')
+  const folder = dialog.getByLabel('directory')
+  await expect(folder).toHaveAttribute('list', 'workflow-recent-folders')
+  await folder.fill('/recent')
+  await dialog.getByRole('button', { name: 'gitlab' }).click()
+  await dialog.getByLabel('mode').selectOption({ label: 'two' })
+  const rows = dialog.getByRole('group', { name: 'repositories' })
+  await rows.getByRole('button', { name: 'Add item' }).click()
+  await rows.getByLabel('repositories item 1', { exact: true }).fill(' /recent ')
+  await rows.getByRole('button', { name: 'Add item' }).click()
+  await rows.getByRole('button', { name: 'Remove repositories item 2' }).click()
+  await create.click()
+  await expect(dialog).toHaveCount(0)
+  const body = await page.evaluate(() => window.mockDesktop.calls.find(c => c.action === 'runWorkflow')?.args[0])
+  expect(JSON.parse(String(body)).inputs).toEqual({
+    directory: '/recent', provider: 'gitlab', mode: 'two', repositories: ['/recent'],
+  })
 })
