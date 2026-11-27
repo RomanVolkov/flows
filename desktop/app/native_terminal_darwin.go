@@ -17,6 +17,7 @@ void flowsNativeTerminalClose(const char *id);
 import "C"
 
 import (
+	"context"
 	"errors"
 	"os"
 	"sync"
@@ -38,7 +39,53 @@ type nativeTerminalEventPayload struct {
 var (
 	nativeAppsMu sync.RWMutex
 	nativeApps   = map[string]*App{}
+
+	nativeEventOnce   sync.Once
+	nativeEventMu     sync.Mutex
+	nativeEventQueue  []nativeEventItem
+	nativeEventNotify = make(chan struct{}, 1)
 )
+
+type nativeEventItem struct {
+	ctx     context.Context
+	channel string
+	payload nativeTerminalEventPayload
+}
+
+func enqueueNativeTerminalEvent(ctx context.Context, channel string, payload nativeTerminalEventPayload) {
+	nativeEventOnce.Do(func() {
+		go runNativeTerminalEventDispatcher()
+	})
+	nativeEventMu.Lock()
+	nativeEventQueue = append(nativeEventQueue, nativeEventItem{
+		ctx:     ctx,
+		channel: channel,
+		payload: payload,
+	})
+	nativeEventMu.Unlock()
+	select {
+	case nativeEventNotify <- struct{}{}:
+	default:
+	}
+}
+
+func runNativeTerminalEventDispatcher() {
+	for range nativeEventNotify {
+		for {
+			nativeEventMu.Lock()
+			if len(nativeEventQueue) == 0 {
+				nativeEventMu.Unlock()
+				break
+			}
+			batch := nativeEventQueue
+			nativeEventQueue = nil
+			nativeEventMu.Unlock()
+			for _, item := range batch {
+				wailsruntime.EventsEmit(item.ctx, item.channel, item.payload)
+			}
+		}
+	}
+}
 
 func nativeTerminalSupported() bool {
 	return os.Getenv("FLOWS_TERMINAL_RENDERER") != "canvas"
@@ -147,5 +194,8 @@ func flowsNativeTerminalDispatchEvent(
 	if ctitle != nil {
 		evt.Title = C.GoString(ctitle)
 	}
-	wailsruntime.EventsEmit(app.ctx, "flows:terminal-native:"+id, evt)
+	// Dispatch off the AppKit main thread: Wails v2 ExecJS calls [nsscript release]
+	// inside ON_MAIN_THREAD on an autoreleased NSString, which double-frees if called
+	// while the main thread's autorelease pool drains before the async block runs.
+	enqueueNativeTerminalEvent(app.ctx, "flows:terminal-native:"+id, evt)
 }
