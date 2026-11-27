@@ -157,6 +157,7 @@ esac
 		t.Fatal(err)
 	}
 	request("first")
+	eventually(func() bool { return request("first").Status == store.Running })
 	executable(`{"protocol":1,"kind":"error","error":{"code":"failed","message":"test failure"}}`)
 	importPkg(tool)
 	eventually(func() bool {

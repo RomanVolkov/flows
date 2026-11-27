@@ -108,6 +108,9 @@ func pinWorkflowTools(snapshot *workflow.LaunchSnapshot, reg *catalog.Registry, 
 			return err
 		}
 		if op.ExecutionKind != catalog.ExecPlugin {
+			if op.PackageID != "core" {
+				return fmt.Errorf("imported operation %q needs a plugin implementation", operation)
+			}
 			continue
 		}
 		tool, found := tools[pkg.PackageID]

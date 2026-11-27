@@ -12,10 +12,11 @@ import (
 const workflowUnknownOutcome = "The daemon stopped while this operation was running. Its outcome is unknown."
 
 type WorkflowRun struct {
-	RunID   string          `json:"run_id"`
-	NodeID  string          `json:"node_id"`
-	Status  Status          `json:"status"`
-	Outputs json.RawMessage `json:"outputs,omitempty"`
+	RequestID string          `json:"request_id"`
+	RunID     string          `json:"run_id"`
+	NodeID    string          `json:"node_id"`
+	Status    Status          `json:"status"`
+	Outputs   json.RawMessage `json:"outputs,omitempty"`
 }
 
 type WorkflowStep struct {
@@ -45,9 +46,9 @@ func (s *Store) WorkflowRunByRequest(ctx context.Context, requestID string) (Wor
 func workflowRunByRequest(ctx context.Context, db queryer, requestID string) (WorkflowRun, error) {
 	var run WorkflowRun
 	var outputs sql.NullString
-	err := db.QueryRowContext(ctx, `SELECT w.run_id,w.root_node_id,w.status,w.outputs_json
-		FROM workflow_runs w JOIN run_roots r ON w.run_id=r.id WHERE r.request_id=?`, requestID).
-		Scan(&run.RunID, &run.NodeID, &run.Status, &outputs)
+	err := db.QueryRowContext(ctx, `SELECT r.request_id,w.run_id,w.root_node_id,n.status,w.outputs_json
+		FROM workflow_runs w JOIN run_roots r ON w.run_id=r.id JOIN nodes n ON n.id=w.root_node_id WHERE r.request_id=?`, requestID).
+		Scan(&run.RequestID, &run.RunID, &run.NodeID, &run.Status, &outputs)
 	run.Outputs = json.RawMessage(outputs.String)
 	return run, err
 }
@@ -70,7 +71,7 @@ func (s *Store) CreateWorkflowRun(ctx context.Context, spec NewWorkflowRun) (Wor
 		if err := tx.QueryRowContext(ctx, "SELECT id FROM definition_revisions WHERE definition_id=? AND digest=?", spec.WorkflowID, spec.SnapshotDigest).Scan(&revision); err != nil {
 			return err
 		}
-		run = WorkflowRun{RunID: rand.Text(), NodeID: rand.Text(), Status: Ready}
+		run = WorkflowRun{RequestID: spec.RequestID, RunID: rand.Text(), NodeID: rand.Text(), Status: Ready}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO run_roots(id,definition_revision_id,request_id,created_at) VALUES(?,?,?,?)", run.RunID, revision, spec.RequestID, tx.now); err != nil {
 			return err
 		}
