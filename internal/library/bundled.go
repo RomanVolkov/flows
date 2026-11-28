@@ -15,18 +15,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const bundledMarkerVersion = "source-v4\n"
+const bundledMarkerVersion = "source-v7\n"
 
 // Upgrade only working copies that still match a shipped workflow revision.
 var previousBundledWorkflows = map[string][]string{
 	"deliver-change": {
 		"b93f1c12d9235f6e7baf343fdc4efcf9d8d93d341c09dd727d048d2fd77c0501",
 		"6fc45874c5d072e547f5025eb437f8a0903278ef596ec19ca290752a4856a6c4",
+		"9334c7f0ed84ddfd4365cb40d00119dfe665fbff4bb8ad255e56c43bd13ded28",
 	},
 	"review-open-prs": {
 		"6026fbe08b9b63f3980e1b0e6728bf233a29f988c244056cf7db6e352aba5cb5",
 		"d44eb186370914d4c52adff4bbedb65dfd344d40de58db6714003293c32e437d",
 		"97496552e19f4c1e889cd7e113c3ace64be8a7932f7fb2e76887ca3d26318017",
+		"31c607ad14f63400f6bbb1037d887acafa2e615755e6f8a5da918d04045335dc",
 	},
 	"validate-package": {
 		"3badd7bab4e52761b179c496e73ca0ffcf2f258bc8d69ffd691c6c760e6ea132",
@@ -34,10 +36,10 @@ var previousBundledWorkflows = map[string][]string{
 	},
 }
 
-var previousBundledTools = map[string]string{
-	"git":    "6ece8cf1abf7dc3a7e6e1897c456c033d0130e55afed8af5410ae33b5c11f104",
-	"github": "5b8ef86eff3236599395468f57fe13da012f5b8c89a57ff69ebd5a71aacf478c",
-	"gitlab": "df71b02c41c5080f300eca8bd6d1aa4af1f8b5a2de6673b204d69114dd992eb1",
+var previousBundledTools = map[string][]string{
+	"git":    {"6ece8cf1abf7dc3a7e6e1897c456c033d0130e55afed8af5410ae33b5c11f104"},
+	"github": {"5b8ef86eff3236599395468f57fe13da012f5b8c89a57ff69ebd5a71aacf478c", "3aca61ad0e3cf96478570908fd5edd3d7a8ff8a06dacf245f453dc2fc08efcb4", "96b85f49b0b132581820b4edc5c09874c30ad56ff535ed37646330e4cabc5d14"},
+	"gitlab": {"df71b02c41c5080f300eca8bd6d1aa4af1f8b5a2de6673b204d69114dd992eb1"},
 }
 
 // InstallBundled copies starter packages into the editable library once per bundle
@@ -70,6 +72,37 @@ func installBundled(ctx context.Context, home paths.Home, resources, goBin strin
 		return nil
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
+	}
+
+	if string(data) == "source-v5\n" {
+		source := filepath.Join(resources, "workflows", "deliver-change")
+		if err := installBundledPackage(ctx, home, source, KindWorkflow, goBin); err != nil {
+			return err
+		}
+		if err := installBundledPackage(ctx, home, filepath.Join(resources, "workflows", "review-open-prs"), KindWorkflow, goBin); err != nil {
+			return err
+		}
+		if err := installBundledPackage(ctx, home, filepath.Join(resources, "plugins", "github"), KindTool, goBin); err != nil {
+			return err
+		}
+		return os.WriteFile(marker, []byte(bundledMarkerVersion), 0600)
+	}
+	if string(data) == "source-v6\n" {
+		if err := installBundledPackage(ctx, home, filepath.Join(resources, "plugins", "github"), KindTool, goBin); err != nil {
+			return err
+		}
+		return os.WriteFile(marker, []byte(bundledMarkerVersion), 0600)
+	}
+	if string(data) == "source-v4\n" {
+		for _, id := range []string{"deliver-change", "review-open-prs"} {
+			if err := installBundledPackage(ctx, home, filepath.Join(resources, "workflows", id), KindWorkflow, goBin); err != nil {
+				return err
+			}
+		}
+		if err := installBundledPackage(ctx, home, filepath.Join(resources, "plugins", "github"), KindTool, goBin); err != nil {
+			return err
+		}
+		return os.WriteFile(marker, []byte(bundledMarkerVersion), 0600)
 	}
 
 	// Existing installations only need the affected starter packages updated.
@@ -183,7 +216,7 @@ func installBundledPackage(ctx context.Context, home paths.Home, source string, 
 		}
 	case targetErr == nil && aliasErr == nil && kind == KindTool && prev.Status == StatusConflict:
 		// Upgrade legacy prebuilt binary-only bundles cleanly while preserving user-modified tool sources.
-		if prev.ExistingDigest == previousBundledTools[prev.ID] || isLegacyPrebuiltBundle(home, prev.ID, prev.TargetDir) {
+		if slices.Contains(previousBundledTools[prev.ID], prev.ExistingDigest) || isLegacyPrebuiltBundle(home, prev.ID, prev.TargetDir) {
 			if _, err := Import(home, source, ImportOptions{AllowOverwrite: true}); err != nil {
 				return err
 			}

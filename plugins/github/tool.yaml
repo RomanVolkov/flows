@@ -17,6 +17,14 @@ operations:
       type: object
       properties:
         pull_requests: {type: array}
+  - id: github.list-assigned-pull-requests
+    description: List open pull requests assigned to the authenticated GitHub user
+    execution_kind: plugin
+    read_only: true
+    output_schema:
+      type: object
+      properties:
+        pull_requests: {type: array}
   - id: github.get-pull-request
     description: Inspect PR head SHA, files, CI status, and review threads
     execution_kind: plugin

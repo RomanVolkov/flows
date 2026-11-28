@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -70,9 +71,9 @@ type TickOutcome struct {
 // Scheduler evaluates enabled schedules with unique occurrence keys, overlap
 // enforcement, and single-catch-up after sleep.
 type Scheduler struct {
-	mu               sync.Mutex
-	seenOccurrences  map[string]bool
-	schedules        map[string]*Schedule
+	mu              sync.Mutex
+	seenOccurrences map[string]bool
+	schedules       map[string]*Schedule
 }
 
 // NewScheduler creates a Scheduler.
@@ -106,6 +107,23 @@ func (s *Scheduler) Put(sched Schedule, def *workflow.Definition) ([]string, err
 	s.schedules[sched.ID] = &cp
 	s.mu.Unlock()
 	return nil, nil
+}
+
+func (s *Scheduler) Remove(id string) {
+	s.mu.Lock()
+	delete(s.schedules, id)
+	s.mu.Unlock()
+}
+
+func (s *Scheduler) List() []Schedule {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	values := make([]Schedule, 0, len(s.schedules))
+	for _, sched := range s.schedules {
+		values = append(values, *sched)
+	}
+	slices.SortFunc(values, func(a, b Schedule) int { return strings.Compare(a.ID, b.ID) })
+	return values
 }
 
 // Evaluate processes all enabled schedules at now, enforcing unique occurrence keys,

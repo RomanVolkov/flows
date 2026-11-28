@@ -18,7 +18,6 @@ nodes:
   draft_plan:
     uses: core.harness
     with:
-      harness: claude
       prompt_template: ./prompts/plan.md
       arguments:
         group_id: ${{ inputs.group_id }}
@@ -30,7 +29,6 @@ nodes:
     uses: core.harness
     needs: [draft_plan]
     with:
-      harness: codex
       prompt_template: ./prompts/review-plan.md
       arguments:
         group_id: ${{ inputs.group_id }}

@@ -29,7 +29,6 @@ nodes:
   group_work:
     uses: core.harness
     with:
-      harness: claude
       prompt_template: ./prompts/group.md
       arguments:
         request: ${{ inputs.request }}
@@ -58,7 +57,6 @@ nodes:
     uses: core.harness
     needs: [plan_group]
     with:
-      harness: claude
       prompt_template: ./prompts/reconcile-plans.md
       arguments:
         request: ${{ inputs.request }}

@@ -17,6 +17,7 @@ import (
 	"github.com/romanvolkov/flows/internal/builtin"
 	"github.com/romanvolkov/flows/internal/engine"
 	"github.com/romanvolkov/flows/internal/paths"
+	"github.com/romanvolkov/flows/internal/schedule"
 	"github.com/romanvolkov/flows/internal/store"
 )
 
@@ -70,7 +71,8 @@ func Run(ctx context.Context, home paths.Home, build string) error {
 	if err != nil {
 		return err
 	}
-	workflows := &workflowRunner{ctx: ctx, state: state, runs: runs, notifications: notifications, watches: watches, library: libraryWorker, cancellations: make(map[string]context.CancelFunc)}
+	workflows := &workflowRunner{ctx: ctx, state: state, runs: runs, notifications: notifications, watches: watches, library: libraryWorker, cancellations: make(map[string]context.CancelFunc), scheduler: schedule.NewScheduler()}
+	go workflows.runSchedules()
 	defer workflows.wg.Wait()
 	server := &http.Server{
 		BaseContext:       func(net.Listener) context.Context { return ctx },
@@ -143,7 +145,7 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			writeError(w, http.StatusRequestEntityTooLarge, "body_too_large", "request body exceeds 1 MiB")
 			return
 		}
-		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && r.URL.Path != "/v1/workflows/result" && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") && !strings.HasPrefix(r.URL.Path, "/v1/questions/") {
+		if r.ContentLength != 0 && r.URL.Path != "/v1/runs" && r.URL.Path != "/v1/workflows/run" && r.URL.Path != "/v1/workflows/result" && (r.URL.Path != "/v1/schedules" && r.URL.Path != "/v1/schedules/put") && !strings.HasPrefix(r.URL.Path, "/v1/library/") && !strings.HasPrefix(r.URL.Path, "/v1/settings") && !strings.HasPrefix(r.URL.Path, "/v1/questions/") {
 			body := http.MaxBytesReader(w, r.Body, MaxBodyBytes)
 			n, err := io.Copy(io.Discard, body)
 			var tooLarge *http.MaxBytesError
@@ -187,6 +189,8 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 			workflows.submitHarnessResult(w, r)
 		case "/v1/workflows", "/v1/workflows/run":
 			workflows.serveHTTP(w, r)
+		case "/v1/schedules", "/v1/schedules/put":
+			workflows.serveSchedules(w, r)
 		case "/v1/library":
 			handleLibrary(w, r, home, libraryWorker)
 		case "/v1/settings", "/v1/settings/validate":
@@ -208,6 +212,10 @@ func handler(version Version, shutdown context.CancelFunc, state *store.Store, s
 		case "/v1/sessions":
 			handleSessions(w, r, sessions)
 		default:
+			if strings.HasPrefix(r.URL.Path, "/v1/schedules/") {
+				workflows.serveSchedules(w, r)
+				return
+			}
 			if strings.HasPrefix(r.URL.Path, "/v1/questions/") {
 				questions(w, r)
 				return

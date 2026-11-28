@@ -8,6 +8,7 @@ import (
 	"maps"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/romanvolkov/flows/internal/engine"
@@ -254,17 +255,21 @@ func (r *workflowRunner) expandWorkflowStep(ctx context.Context, run store.Workf
 			return nil, err
 		}
 		defer r.registerWorkflowChildren(run, steps)()
+		var wait sync.WaitGroup
+		failures := make([]error, len(steps))
 		for i, child := range steps {
-			local := bind
-			local.Item = items[i]
-			children[i].Outputs, err = r.executeWorkflowStep(ctx, run, spec, child, node, snapshot, local, false)
-			if err != nil {
-				for _, pending := range steps[i+1:] {
-					if r.ctx.Err() == nil {
-						_ = r.state.FinishWorkflowNode(r.ctx, pending.NodeID, store.Cancelled, nil, "")
-					}
-				}
-				return nil, err
+			wait.Add(1)
+			go func(i int, child store.WorkflowStep) {
+				defer wait.Done()
+				local := bind
+				local.Item = items[i]
+				children[i].Outputs, failures[i] = r.executeWorkflowStep(ctx, run, spec, child, node, snapshot, local, false)
+			}(i, child)
+		}
+		wait.Wait()
+		for _, failure := range failures {
+			if failure != nil {
+				return nil, failure
 			}
 		}
 		return map[string]any{"items": engine.JoinFanOut(children)}, nil

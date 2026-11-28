@@ -21,6 +21,7 @@ import (
 	"github.com/romanvolkov/flows/internal/host"
 	"github.com/romanvolkov/flows/internal/library"
 	"github.com/romanvolkov/flows/internal/plugin"
+	"github.com/romanvolkov/flows/internal/schedule"
 	"github.com/romanvolkov/flows/internal/store"
 	"github.com/romanvolkov/flows/internal/workflow"
 )
@@ -38,6 +39,7 @@ type workflowRunner struct {
 	mu            sync.Mutex
 	cancellations map[string]context.CancelFunc
 	wg            sync.WaitGroup
+	scheduler     *schedule.Scheduler
 }
 
 func (r *workflowRunner) prepareLaunch(req workflowLaunchRequest) (store.NewWorkflowRun, *workflow.LaunchSnapshot, error) {

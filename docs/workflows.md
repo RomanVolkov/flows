@@ -30,10 +30,16 @@ Validate a workflow or tool package with `flows validate <package-directory>`. A
 ## Built-in Workflows
 
 - `workflows/validate-package` checks the manifest and the declared dependencies of a workflow or tool package.
-- `workflows/review-open-prs` lists open GitHub pull requests or GitLab merge requests, runs a review agent for each,
-  and sends a notification when the reviews finish.
+- `workflows/review-open-prs` finds open GitHub pull requests assigned to your authenticated GitHub user and starts
+  an independent review session for each one, using the default harness configured in Settings.
 - `workflows/deliver-change` turns a change request into task groups, asks for approval, and has agents draft and
-  review plans for the groups. You can edit the YAML and prompts to adapt it to your process.
+  review plans for the groups using the default harness in Settings. The workflow ends with a review of how the plans fit together.
+
+## Scheduled Workflows
+
+Create a recurring run in **Settings → Scheduled workflows**. Select a ready workflow, enter its typed input values,
+then set a five-field cron expression and time zone. Flows stores the schedule locally and the daemon starts a workflow
+run for each due occurrence. Remove a schedule from the same section to stop future runs.
 
 ## Evidence-Backed Improvements
 

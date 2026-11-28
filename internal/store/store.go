@@ -18,7 +18,7 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 type Store struct {
 	db *sql.DB
@@ -111,6 +111,18 @@ func (s *Store) init(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=4"); err != nil {
+			return err
+		}
+	}
+	if version < 5 {
+		script, err := migrations.ReadFile("migrations/005_schedules.sql")
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, string(script)); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "PRAGMA user_version=5"); err != nil {
 			return err
 		}
 	}

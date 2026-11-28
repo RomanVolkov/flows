@@ -17,14 +17,15 @@ import (
 
 // PullRequest is the normalized PR representation preserving native IDs.
 type PullRequest struct {
-	NativeID string `json:"native_id"`
-	Number   int    `json:"number"`
-	Title    string `json:"title"`
-	State    string `json:"state"`
-	HeadRef  string `json:"head_ref"`
-	HeadSHA  string `json:"head_sha"`
-	BaseRef  string `json:"base_ref"`
-	URL      string `json:"url"`
+	Repository string `json:"repository"`
+	NativeID   string `json:"native_id"`
+	Number     int    `json:"number"`
+	Title      string `json:"title"`
+	State      string `json:"state"`
+	HeadRef    string `json:"head_ref"`
+	HeadSHA    string `json:"head_sha"`
+	BaseRef    string `json:"base_ref"`
+	URL        string `json:"url"`
 }
 
 func ghBinary() string {
@@ -84,6 +85,9 @@ func withNormalizedRepo(next sdk.Handler) sdk.Handler {
 			if err := json.Unmarshal(raw, &remote); err != nil {
 				return nil, err
 			}
+		}
+		if remote == "" {
+			return next(ctx, ic)
 		}
 		repo, err := normalizeRepo(remote)
 		if err != nil {
@@ -151,6 +155,7 @@ func main() {
 		Owner:   "flows",
 		Operations: []sdk.Operation{
 			{ID: "github.list-pull-requests", Description: "List PRs", ReadOnly: true},
+			{ID: "github.list-assigned-pull-requests", Description: "List open PRs assigned to the authenticated user", ReadOnly: true},
 			{ID: "github.get-pull-request", Description: "Get PR details", ReadOnly: true},
 			{ID: "github.open-or-reuse-pr", Description: "Open or reuse PR"},
 			{ID: "github.reply-comment", Description: "Reply to PR thread"},
@@ -168,6 +173,13 @@ func main() {
 				}
 			}
 			prs, err := listPRs(ctx, in.Repository, in.State)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"pull_requests": prs}, nil
+		},
+		"github.list-assigned-pull-requests": func(ctx context.Context, ic sdk.InvokeContext) (any, error) {
+			prs, err := listAssignedPRs(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -266,4 +278,68 @@ func main() {
 	if err := sdk.Serve(m, handlers); err != nil {
 		os.Exit(1)
 	}
+}
+
+func listAssignedPRs(ctx context.Context) ([]PullRequest, error) {
+	query := url.QueryEscape("is:pr is:open assignee:@me")
+	out, err := runGH(ctx, "api", "search/issues?q="+query+"&per_page=100")
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Items []struct {
+			Number        int       `json:"number"`
+			RepositoryURL string    `json:"repository_url"`
+			PullRequest   *struct{} `json:"pull_request"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return nil, err
+	}
+	prs := make([]PullRequest, 0, len(result.Items))
+	for _, item := range result.Items {
+		if item.PullRequest == nil || item.RepositoryURL == "" {
+			continue
+		}
+		repositoryURL, err := url.Parse(item.RepositoryURL)
+		if err != nil {
+			return nil, err
+		}
+		repo := strings.TrimPrefix(repositoryURL.Path, "/repos/")
+		if repo == repositoryURL.Path || !strings.Contains(repo, "/") {
+			continue
+		}
+		pr, err := getPullRequest(ctx, repo, item.Number)
+		if err != nil {
+			return nil, err
+		}
+		pr.Repository = repo
+		prs = append(prs, pr)
+	}
+	return prs, nil
+}
+
+func getPullRequest(ctx context.Context, repo string, number int) (PullRequest, error) {
+	out, err := runGH(ctx, "api", fmt.Sprintf("repos/%s/pulls/%d", repo, number))
+	if err != nil {
+		return PullRequest{}, err
+	}
+	var item struct {
+		ID      int64  `json:"id"`
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		State   string `json:"state"`
+		HTMLURL string `json:"html_url"`
+		Head    struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if err := json.Unmarshal(out, &item); err != nil {
+		return PullRequest{}, err
+	}
+	return PullRequest{NativeID: fmt.Sprintf("gh:%d", item.ID), Number: item.Number, Title: item.Title, State: item.State, HeadRef: item.Head.Ref, HeadSHA: item.Head.SHA, BaseRef: item.Base.Ref, URL: item.HTMLURL}, nil
 }

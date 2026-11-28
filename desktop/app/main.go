@@ -95,7 +95,7 @@ func (a *App) Request(action, payload string) (string, error) {
 		}
 		path += "?" + query.Encode()
 		payload = ""
-	case "workspace", "settings", "harnesses", "sessions", "library", "workflows", "notifications":
+	case "workspace", "settings", "harnesses", "sessions", "library", "workflows", "notifications", "schedules":
 		path = "/v1/" + action
 	case "stopSession":
 		method, path = http.MethodPost, "/v1/sessions/"+url.PathEscape(payload)+"/stop"
@@ -125,6 +125,11 @@ func (a *App) Request(action, payload string) (string, error) {
 		method, path = http.MethodPost, "/v1/questions/"+url.PathEscape(answer.ID)+"/answer"
 	case "runWorkflow":
 		method, path = http.MethodPost, "/v1/workflows/run"
+	case "putSchedule":
+		method, path = http.MethodPost, "/v1/schedules/put"
+	case "deleteSchedule":
+		method, path = http.MethodDelete, "/v1/schedules/"+url.PathEscape(payload)
+		payload = ""
 	case "newSession":
 		method, path = http.MethodPost, "/v1/runs"
 	case "previewPackage":

@@ -1,89 +1,24 @@
 schema: flows/v1
 id: review-open-prs
-version: 1.0.0
-description: Find open GitHub pull requests or GitLab merge requests and have coding agents review them.
-inputs:
-  repository:
-    type: string
-    required: true
-    control: text
-    placeholder: owner/repo
-    description: Use owner/repo or a GitHub clone URL. For GitLab, use the full namespace/project path.
-  use_github:
-    type: boolean
-    default: true
-  use_gitlab:
-    type: boolean
-    default: false
-  provider:
-    type: string
-    default: github
-    enum: [github, gitlab]
-    description: Default provider for review
-  reviewer_harness:
-    type: string
-    default: claude
-    description: Harness to run the reviews
-  dedupe_by_head:
-    type: boolean
-    default: true
+version: 2.0.0
+description: Find open GitHub pull requests assigned to you and start an independent review session for each one.
 nodes:
-  discover_github:
-    uses: github.list-pull-requests
-    when: ${{ inputs.use_github }}
-    with:
-      repository: ${{ inputs.repository }}
-      state: open
-  discover_gitlab:
-    uses: gitlab.list-merge-requests
-    when: ${{ inputs.use_gitlab }}
-    with:
-      project: ${{ inputs.repository }}
-      state: opened
-  review_github_pr:
+  discover_assigned_prs:
+    uses: github.list-assigned-pull-requests
+    with: {}
+  review_each_pr:
     uses: core.harness
-    needs: [discover_github]
-    when: ${{ inputs.use_github }}
+    needs: [discover_assigned_prs]
     for_each:
-      items: ${{ nodes.discover_github.outputs.pull_requests }}
-      key: ${{ inputs.repository }}:${{ item.number }}:${{ item.head_sha }}
+      items: ${{ nodes.discover_assigned_prs.outputs.pull_requests }}
+      key: ${{ item.repository }}:${{ item.number }}:${{ item.head_sha }}
     with:
-      harness: ${{ inputs.reviewer_harness }}
       prompt_template: ./prompts/review.md
       arguments:
-        repository: ${{ inputs.repository }}
-        provider: github
+        repository: ${{ item.repository }}
         pr_number: ${{ item.number }}
         head_sha: ${{ item.head_sha }}
         title: ${{ item.title }}
-    outputs:
-      findings_count: {type: integer, required: true}
-      summary: {type: string, required: true}
-  review_gitlab_mr:
-    uses: core.harness
-    needs: [discover_gitlab]
-    when: ${{ inputs.use_gitlab }}
-    for_each:
-      items: ${{ nodes.discover_gitlab.outputs.merge_requests }}
-      key: ${{ inputs.repository }}:${{ item.number }}:${{ item.head_sha }}
-    with:
-      harness: ${{ inputs.reviewer_harness }}
-      prompt_template: ./prompts/review.md
-      arguments:
-        repository: ${{ inputs.repository }}
-        provider: gitlab
-        pr_number: ${{ item.number }}
-        head_sha: ${{ item.head_sha }}
-        title: ${{ item.title }}
-    outputs:
-      findings_count: {type: integer, required: true}
-      summary: {type: string, required: true}
-  notify_findings:
-    uses: core.notify
-    needs: [review_github_pr, review_gitlab_mr]
-    with:
-      title: PR/MR Review Complete
-      body: Completed review for ${{ inputs.repository }}
+        url: ${{ item.url }}
 outputs:
-  github_reviews: ${{ nodes.review_github_pr.outputs }}
-  gitlab_reviews: ${{ nodes.review_gitlab_mr.outputs }}
+  reviews: ${{ nodes.review_each_pr.outputs }}
